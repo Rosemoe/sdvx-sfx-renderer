@@ -31,6 +31,7 @@ __all__ = [
     "HighpassFilter",
     "EffectEntry",
     "enum_to_effect",
+    "from_vox_params",
     "from_definition",
     "get_default_effects",
 ]
@@ -646,6 +647,86 @@ class EffectEntry(VoxEntity):
 def enum_to_effect(val: FXType) -> type[Effect]:
     """Return the class corresponding to an enumeration member."""
     return _enumToEffect[val]
+
+
+def from_vox_params(effect_index: int, params: Sequence[float]) -> Effect:
+    """Construct an effect object from a VOX FXBUTTON EFFECT INFO row."""
+    try:
+        effect_type = FXType(effect_index)
+    except ValueError:
+        logger.warning(f"unknown effect index in VOX params: {effect_index}")
+        return NoEffect()
+
+    def get(index: int, default: float = 0.0) -> float:
+        return params[index] if index < len(params) else default
+
+    match effect_type:
+        case FXType.NO_EFFECT:
+            return NoEffect()
+        case FXType.RETRIGGER:
+            return Retrigger(
+                wavelength=int(get(0, 4)),
+                mix=get(1, 95.0),
+                update_period=get(2, 2.0),
+                feedback=get(3, 1.0),
+                amount=get(4, 0.85),
+                decay=get(5, 0.15),
+            )
+        case FXType.GATE:
+            return Gate(mix=get(0, 98.0), wavelength=int(get(1, 16)), length=get(2, 2.0))
+        case FXType.FLANGER:
+            return Flanger(
+                mix=get(0, 75.0),
+                period=get(1, 2.0),
+                feedback=get(2, 0.5),
+                stereo_width=int(get(3, 90)),
+                hicut_gain=get(4, 2.0),
+            )
+        case FXType.TAPESTOP:
+            return Tapestop(mix=get(0, 100.0), speed=get(1, 8.0), rate=get(2, 0.4))
+        case FXType.SIDECHAIN:
+            return Sidechain(
+                mix=get(0, 90.0),
+                frequency=get(1, 1.0),
+                attack=int(get(2, 45)),
+                hold=int(get(3, 50)),
+                release=int(get(4, 60)),
+            )
+        case FXType.WOBBLE:
+            return Wobble(
+                filter_type=PassFilterType(int(get(0, PassFilterType.LOW_PASS.value))),
+                wave_shape=WaveShape(int(get(1, WaveShape.SINE.value))),
+                mix=get(2, 80.0),
+                low_cutoff=get(3, 500.0),
+                hi_cutoff=get(4, 18000.0),
+                frequency=get(5, 4.0),
+                bandwidth=get(6, 1.4),
+            )
+        case FXType.BITCRUSH:
+            return Bitcrush(mix=get(0, 100.0), amount=int(get(1, 12)))
+        case FXType.RETRIGGER_EX:
+            return RetriggerEx(
+                wavelength=int(get(0, 8)),
+                mix=get(1, 95.0),
+                update_period=get(2, 2.0),
+                feedback=get(3, 1.0),
+                amount=get(4, 0.85),
+                decay=get(5, 0.15),
+            )
+        case FXType.PITCH_SHIFT:
+            return PitchShift(mix=get(0, 100.0), amount=int(get(1, 12)))
+        case FXType.TAPESCRATCH:
+            return Tapescratch(
+                mix=get(0, 100.0),
+                curve_slope=get(1, 5.0),
+                attack=get(2, 1.0),
+                hold=get(3, 0.1),
+                release=get(4, 1.0),
+            )
+        case FXType.LOW_PASS_FILTER:
+            return LowpassFilter(mix=get(0, 75.0), low_cutoff=get(1, 400.0), hi_cutoff=get(2, 900.0), bandwidth=get(3, 2.0))
+        case FXType.HIGH_PASS_FILTER:
+            return HighpassFilter(mix=get(0, 100.0), cutoff=get(1, 2000.0), curve_slope=get(2, 5.0), bandwidth=get(3, 1.4))
 
 
 def get_default_effects() -> list[EffectEntry]:

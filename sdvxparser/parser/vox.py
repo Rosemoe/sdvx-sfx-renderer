@@ -22,6 +22,11 @@ from ..classes.chart import (
     VolInfo,
     TICKS_PER_BAR,
 )
+from ..classes.effects import (
+    Effect,
+    EffectEntry,
+    from_vox_params,
+)
 from ..classes.enums import (
     EasingType,
     FilterIndex,
@@ -150,6 +155,8 @@ class VOXParser(Parser):
 
     # Stateful data
     _current_section: VOXSection
+    _effect_param_buffer: list[Effect]
+    _parsed_effect_params: bool
 
     def __init__(self) -> None:
         self.__song_chart_data = VOXSongChartContainer()
@@ -160,6 +167,8 @@ class VOXParser(Parser):
         self._laser_scale = LASER_SCALE_DEFAULT
 
         self._current_section = VOXSection.NONE
+        self._effect_param_buffer = []
+        self._parsed_effect_params = False
 
     def parse(self, file: TextIO) -> VOXSongChartContainer:
         self._file_path = Path(file.name).resolve()
@@ -233,7 +242,18 @@ class VOXParser(Parser):
         elif self._current_section == VOXSection.FILTER_PARAMS:
             pass
         elif self._current_section == VOXSection.EFFECT_PARAMS:
-            pass
+            if not self._parsed_effect_params:
+                self.__song_chart_data.chart_info.effect_list = []
+                self._effect_param_buffer = []
+                self._parsed_effect_params = True
+            values = [v.strip() for v in line.split(",") if v.strip()]
+            effect_index = int(values[0])
+            params = [float(v) for v in values[1:]]
+            self._effect_param_buffer.append(from_vox_params(effect_index, params))
+            if len(self._effect_param_buffer) == 2:
+                effect1, effect2 = self._effect_param_buffer
+                self.__song_chart_data.chart_info.effect_list.append(EffectEntry(effect1, effect2))
+                self._effect_param_buffer = []
         elif self._current_section == VOXSection.AUTOTAB_PARAMS:
             pass
         elif self._current_section == VOXSection.REVERB:
