@@ -1,4 +1,4 @@
-# SDVX SFX Audio Generator
+# SDVX SFX Renderer
 
 Renders SOUND VOLTEX FX button effects and VOL laser filters over chart audio from a VOX chart. It can also add knob sounds for full laser slams and optional click sounds at BT/FX note starts.
 
