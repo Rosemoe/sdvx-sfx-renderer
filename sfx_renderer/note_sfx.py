@@ -12,6 +12,8 @@ from .audio import overlay_audio
 
 
 class NoteHitSFX:
+    sample_rate: int
+
     def _render_note_hit_sounds(
         self,
         chart: ChartInfo,

@@ -7,6 +7,8 @@ from .audio import clamp
 
 
 class FilterDSP:
+    sample_rate: int
+
     def _geom_lerp(self, start: float, end: float, value: float) -> float:
         value = clamp(value, 0.0, 1.0)
         return float(np.exp(np.log(start) + (np.log(end) - np.log(start)) * value))

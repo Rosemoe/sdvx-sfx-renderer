@@ -6,6 +6,7 @@ import os
 from decimal import Decimal
 from fractions import Fraction
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 
@@ -46,7 +47,7 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX):
         knob_volume: float = 1.0,
         click_path: str | Path | None = None,
         click_volume: float = 1.0,
-    ) -> list[FXRenderEvent]:
+    ) -> list[FXRenderEvent[Effect]]:
         """Render a chart's FX button effects and write the processed full-song audio."""
         vox_path = Path(vox_path)
         audio_path = Path(audio_path)
@@ -76,8 +77,8 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX):
         return events
 
     @staticmethod
-    def _merge_duplicate_fx_events(events: list[FXRenderEvent]) -> list[FXRenderEvent]:
-        merged: list[FXRenderEvent] = []
+    def _merge_duplicate_fx_events(events: list[FXRenderEvent[Effect]]) -> list[FXRenderEvent[Effect]]:
+        merged: list[FXRenderEvent[Effect]] = []
         for event in events:
             duplicate_index = next(
                 (
@@ -114,7 +115,7 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX):
         knob_volume: float = 1.0,
         click_audio: np.ndarray | None = None,
         click_volume: float = 1.0,
-    ) -> tuple[np.ndarray, list[FXRenderEvent]]:
+    ) -> tuple[np.ndarray, list[FXRenderEvent[Effect]]]:
         """Render all active FX button holds into a copy of ``audio``."""
         events = self._collect_events(chart, len(audio), offset_ms)
         output = audio.astype(np.float32, copy=True)
@@ -131,9 +132,9 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX):
                     f"duration_samples={event.end_sample - event.start_sample}"
                 )
             if isinstance(event.effect, PitchShift):
-                self._render_pitch_shift_event(output, event)
+                self._render_pitch_shift_event(output, cast(FXRenderEvent[PitchShift], event))
             elif isinstance(event.effect, Flanger):
-                self._render_flanger_event(output, event)
+                self._render_flanger_event(output, cast(FXRenderEvent[Flanger], event))
             else:
                 output[event.start_sample : event.end_sample] = self.apply(event.effect, segment, event.bpm)
         self._render_vol_effects(chart, output, offset_ms=offset_ms)
@@ -143,7 +144,7 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX):
             self._render_note_hit_sounds(chart, output, click_audio, offset_ms=offset_ms, volume=click_volume)
         return output, events
 
-    def _collect_events(self, chart: ChartInfo, audio_samples: int, offset_ms: float) -> list[FXRenderEvent]:
+    def _collect_events(self, chart: ChartInfo, audio_samples: int, offset_ms: float) -> list[FXRenderEvent[Effect]]:
         fx_notes = sorted(chart.note_data.iter_fxs(), key=lambda item: item[1])
         latest = TimePoint()
         for _, timepoint, fx in fx_notes:
@@ -165,7 +166,7 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX):
             (entry.effect1 for entry in chart.effect_list if isinstance(entry.effect1, Flanger)),
             Flanger(),
         )
-        events: list[FXRenderEvent] = []
+        events: list[FXRenderEvent[Effect]] = []
         for note_type, timepoint, fx in fx_notes:
             if fx.duration <= 0 or fx.special <= 0:
                 continue

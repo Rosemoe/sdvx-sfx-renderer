@@ -2,16 +2,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Generic, TypeVar
 
 from sdvxparser.classes.effects import Effect
 
+EffectT = TypeVar("EffectT", bound=Effect)
+
 
 @dataclass(frozen=True)
-class FXRenderEvent:
+class FXRenderEvent(Generic[EffectT]):
     """A timed FX event derived from an FX button note."""
 
     start_sample: int
     end_sample: int
     bpm: float
-    effect: Effect
+    effect: EffectT
     label: str = ""

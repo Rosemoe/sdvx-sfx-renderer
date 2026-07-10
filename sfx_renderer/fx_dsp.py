@@ -74,7 +74,7 @@ class FXDSP(FilterDSP):
     def _beats_to_samples(self, beats: float, bpm: float) -> int:
         return max(1, int(round((60.0 / max(bpm, 1.0)) * beats * self.sample_rate)))
 
-    def _render_pitch_shift_event(self, output: np.ndarray, event: FXRenderEvent) -> None:
+    def _render_pitch_shift_event(self, output: np.ndarray, event: FXRenderEvent[PitchShift]) -> None:
         chunk_size = self._pitch_shift_chunk_size()
         preroll = PITCH_SHIFT_PREROLL_CHUNKS * chunk_size
         context_start = max(0, event.start_sample - preroll)
@@ -94,7 +94,7 @@ class FXDSP(FilterDSP):
     def _pitch_shift_chunk_size(self) -> int:
         return max(2, int(round(PITCH_SHIFT_CHUNK_SIZE_44100 * self.sample_rate / 44100)))
 
-    def _render_flanger_event(self, output: np.ndarray, event: FXRenderEvent) -> None:
+    def _render_flanger_event(self, output: np.ndarray, event: FXRenderEvent[Flanger]) -> None:
         preroll = max(1, int(round(FLANGER_PREROLL_SAMPLES_44100 * self.sample_rate / 44100)))
         context_start = max(0, event.start_sample - preroll)
         context = output[context_start : event.end_sample].copy()
