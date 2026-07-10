@@ -4,7 +4,8 @@ __pycache__/
 output/
 sample/
 *.wav
-!sfx_renderer/knob.wav
-!sfx_renderer/click.wav
+!sfx_renderer/resources/
+!sfx_renderer/resources/knob.wav
+!sfx_renderer/resources/click.wav
 *.flac
 *.mp3

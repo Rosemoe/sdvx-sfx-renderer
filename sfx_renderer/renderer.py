@@ -23,8 +23,9 @@ from .vol_dsp import VolDSP
 
 DEFAULT_SAMPLE_RATE = 44100
 DEFAULT_CHANNELS = 2
-DEFAULT_KNOB_PATH = Path(__file__).with_name("knob.wav")
-DEFAULT_CLICK_PATH = Path(__file__).with_name("click.wav")
+RESOURCE_DIR = Path(__file__).with_name("resources")
+DEFAULT_KNOB_PATH = RESOURCE_DIR / "knob.wav"
+DEFAULT_CLICK_PATH = RESOURCE_DIR / "click.wav"
 
 
 class FXEffects(FXDSP, VolDSP, NoteHitSFX):
