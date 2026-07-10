@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 output/
 *.wav
-!sdvxparser/knob.wav
+!sfx_renderer/knob.wav
+!sfx_renderer/click.wav
 *.flac
 *.mp3

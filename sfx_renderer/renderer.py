@@ -1,0 +1,225 @@
+"""Chart-level SFX render orchestration and command-line entry point."""
+from __future__ import annotations
+
+import argparse
+import os
+from decimal import Decimal
+from fractions import Fraction
+from pathlib import Path
+
+import numpy as np
+
+from sdvxparser.classes.chart import ChartInfo
+from sdvxparser.classes.effects import Effect, Flanger, PitchShift, Retrigger, RetriggerEx
+from sdvxparser.classes.time import TimePoint
+from sdvxparser.parser.vox import VOXParser
+
+from .audio import decode_audio as _decode_audio
+from .audio import encode_audio as _encode_audio
+from .events import FXRenderEvent
+from .fx_dsp import FXDSP
+from .vol_dsp import VolDSP
+
+DEFAULT_SAMPLE_RATE = 44100
+DEFAULT_CHANNELS = 2
+DEFAULT_KNOB_PATH = Path(__file__).with_name("knob.wav")
+
+
+class FXEffects(FXDSP, VolDSP):
+    """Apply SDVX FX button and VOL effects to full-song audio."""
+
+    def __init__(self, sample_rate: int = DEFAULT_SAMPLE_RATE, channels: int = DEFAULT_CHANNELS) -> None:
+        self.sample_rate = sample_rate
+        self.channels = channels
+
+    def render_file(
+        self,
+        vox_path: str | Path,
+        audio_path: str | Path,
+        output_path: str | Path,
+        *,
+        offset_ms: float = 0.0,
+        knob_path: str | Path | None = None,
+        knob_volume: float = 1.0,
+    ) -> list[FXRenderEvent]:
+        """Render a chart's FX button effects and write the processed full-song audio."""
+        vox_path = Path(vox_path)
+        audio_path = Path(audio_path)
+        output_path = Path(output_path)
+        if knob_path is None:
+            knob_path = DEFAULT_KNOB_PATH
+        knob_path = Path(knob_path) if knob_path else None
+
+        with vox_path.open("r", encoding="utf-8-sig") as file:
+            container = VOXParser().parse(file)
+
+        audio = _decode_audio(audio_path, self.sample_rate, self.channels)
+        knob_audio = _decode_audio(knob_path, self.sample_rate, self.channels) if knob_path and knob_path.exists() else None
+        rendered, events = self.render_chart(
+            container.chart_info,
+            audio,
+            offset_ms=offset_ms,
+            knob_audio=knob_audio,
+            knob_volume=knob_volume,
+        )
+        rendered = np.clip(rendered, -1.0, 1.0)
+        _encode_audio(output_path, rendered, self.sample_rate, self.channels)
+        return events
+
+    @staticmethod
+    def _merge_duplicate_fx_events(events: list[FXRenderEvent]) -> list[FXRenderEvent]:
+        merged: list[FXRenderEvent] = []
+        for event in events:
+            duplicate_index = next(
+                (
+                    index
+                    for index, existing in enumerate(merged)
+                    if existing.start_sample == event.start_sample
+                    and existing.end_sample == event.end_sample
+                    and type(existing.effect) is type(event.effect)
+                    and existing.effect == event.effect
+                ),
+                None,
+            )
+            if duplicate_index is None:
+                merged.append(event)
+                continue
+
+            existing = merged[duplicate_index]
+            merged[duplicate_index] = FXRenderEvent(
+                start_sample=existing.start_sample,
+                end_sample=existing.end_sample,
+                bpm=existing.bpm,
+                effect=existing.effect,
+                label=f"{existing.label} | {event.label}",
+            )
+        return merged
+
+    def render_chart(
+        self,
+        chart: ChartInfo,
+        audio: np.ndarray,
+        *,
+        offset_ms: float = 0.0,
+        knob_audio: np.ndarray | None = None,
+        knob_volume: float = 1.0,
+    ) -> tuple[np.ndarray, list[FXRenderEvent]]:
+        """Render all active FX button holds into a copy of ``audio``."""
+        events = self._collect_events(chart, len(audio), offset_ms)
+        output = audio.astype(np.float32, copy=True)
+        for event in events:
+            segment = output[event.start_sample : event.end_sample]
+            if len(segment) == 0:
+                continue
+            if os.environ.get("SDVX_FX_DEBUG") and isinstance(event.effect, (Retrigger, RetriggerEx)):
+                print(
+                    "FX event: "
+                    f"{event.label} "
+                    f"start_sample={event.start_sample} "
+                    f"end_sample={event.end_sample} "
+                    f"duration_samples={event.end_sample - event.start_sample}"
+                )
+            if isinstance(event.effect, PitchShift):
+                self._render_pitch_shift_event(output, event)
+            elif isinstance(event.effect, Flanger):
+                self._render_flanger_event(output, event)
+            else:
+                output[event.start_sample : event.end_sample] = self.apply(event.effect, segment, event.bpm)
+        self._render_vol_effects(chart, output, offset_ms=offset_ms)
+        if knob_audio is not None and len(knob_audio) > 0 and knob_volume > 0:
+            self._render_knob_sounds(chart, output, knob_audio, offset_ms=offset_ms, volume=knob_volume)
+        return output, events
+
+    def _collect_events(self, chart: ChartInfo, audio_samples: int, offset_ms: float) -> list[FXRenderEvent]:
+        fx_notes = sorted(chart.note_data.iter_fxs(), key=lambda item: item[1])
+        latest = TimePoint()
+        for _, timepoint, fx in fx_notes:
+            latest = max(latest, chart.add_duration(timepoint, fx.duration))
+        endpoint = max(TimePoint(chart.end_measure, 0, 1), latest)
+        chart._elapsed_time.clear()
+        chart._elapsed_time_bpm.clear()
+        chart._bpm_durations.clear()
+        chart._calculate_bpm_durations(endpoint)
+
+        fx_start_times = sorted({timepoint for _, timepoint, _ in fx_notes})
+        next_fx_start = {
+            timepoint: fx_start_times[index + 1] if index + 1 < len(fx_start_times) else None
+            for index, timepoint in enumerate(fx_start_times)
+        }
+
+        offset_seconds = Decimal(str(offset_ms)) / Decimal(1000)
+        replacement_flanger = next(
+            (entry.effect1 for entry in chart.effect_list if isinstance(entry.effect1, Flanger)),
+            Flanger(),
+        )
+        events: list[FXRenderEvent] = []
+        for note_type, timepoint, fx in fx_notes:
+            if fx.duration <= 0 or fx.special <= 0:
+                continue
+            effect_index = fx.special - 1
+            if effect_index >= len(chart.effect_list):
+                continue
+            effect = chart.effect_list[effect_index].effect1
+            nominal_end_timepoint = chart.add_duration(timepoint, fx.duration)
+            following_start = next_fx_start[timepoint]
+            end_timepoint = (
+                min(nominal_end_timepoint, following_start)
+                if following_start is not None
+                else nominal_end_timepoint
+            )
+            effective_duration = chart.get_distance(timepoint, end_timepoint)
+            replacement_label = ""
+            if isinstance(effect, (Retrigger, RetriggerEx)) and effective_duration >= Fraction(1, 2):
+                effect = replacement_flanger
+                replacement_label = " Retrigger->Flanger"
+            cut_label = (
+                f" cut@{chart.timepoint_to_vox(end_timepoint)}"
+                if end_timepoint < nominal_end_timepoint
+                else ""
+            )
+            start = chart._get_elapsed_time(timepoint) + offset_seconds
+            end = chart._get_elapsed_time(end_timepoint) + offset_seconds
+            start_sample = max(0, int(round(float(start) * self.sample_rate)))
+            end_sample = min(audio_samples, int(round(float(end) * self.sample_rate)))
+            if end_sample <= start_sample:
+                continue
+            events.append(
+                FXRenderEvent(
+                    start_sample=start_sample,
+                    end_sample=end_sample,
+                    bpm=float(chart.get_bpm(timepoint)),
+                    effect=effect,
+                    label=(
+                        f"{note_type} {chart.timepoint_to_vox(timepoint)} "
+                        f"slot={fx.special}{replacement_label}{cut_label}"
+                    ),
+                )
+            )
+        return self._merge_duplicate_fx_events(events)
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Render SDVX FX button effects into full-song audio.")
+    parser.add_argument("vox", type=Path, help="Path to the VOX chart file.")
+    parser.add_argument("audio", type=Path, help="Path to the source chart audio, e.g. .s3v/.wma/.asf.")
+    parser.add_argument("-o", "--output", type=Path, default=Path("output/fx_render.wav"), help="Output audio path.")
+    parser.add_argument("--sample-rate", type=int, default=DEFAULT_SAMPLE_RATE, help="Render sample rate.")
+    parser.add_argument("--offset-ms", type=float, default=0.0, help="Audio offset applied to chart events.")
+    parser.add_argument("--knob-sound", type=Path, default=DEFAULT_KNOB_PATH, help="VOL side-to-side knob sound path.")
+    parser.add_argument("--knob-volume", type=float, default=1.0, help="VOL knob sound gain.")
+    parser.add_argument("--no-knob", action="store_true", help="Disable VOL side-to-side knob sounds.")
+    args = parser.parse_args()
+
+    renderer = FXEffects(sample_rate=args.sample_rate)
+    events = renderer.render_file(
+        args.vox,
+        args.audio,
+        args.output,
+        offset_ms=args.offset_ms,
+        knob_path=None if args.no_knob else args.knob_sound,
+        knob_volume=args.knob_volume,
+    )
+    print(f"Rendered {len(events)} FX events to {args.output}")
+
+
+if __name__ == "__main__":
+    main()
