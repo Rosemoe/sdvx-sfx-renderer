@@ -100,7 +100,7 @@ class Effect(VoxEntity, ABC):
 
     @staticmethod
     @abstractmethod
-    def from_dict(s: Mapping[str, str]):
+    def from_dict(s: Mapping[str, str]) -> "Effect":
         """Create an instance of this effect from a :py:class:`dict` of parameters."""
         pass
 
@@ -139,7 +139,7 @@ class NoEffect(Effect):
         return FXType.NO_EFFECT
 
     @staticmethod
-    def from_dict(s: Mapping[str, str]):
+    def from_dict(s: Mapping[str, str]) -> "NoEffect":
         return NoEffect()
 
     def map_params(self, s: Sequence[int]) -> None:
@@ -166,7 +166,7 @@ class Retrigger(Effect):
         return FXType.RETRIGGER
 
     @staticmethod
-    def from_dict(s: Mapping[str, str]):
+    def from_dict(s: Mapping[str, str]) -> "Retrigger":
         effect = Retrigger()
         if "updatePeriod" in s:
             effect.update_period = parse_length(s["updatePeriod"]) * 4
@@ -212,7 +212,7 @@ class Gate(Effect):
         return FXType.GATE
 
     @staticmethod
-    def from_dict(s: Mapping[str, str]):
+    def from_dict(s: Mapping[str, str]) -> "Gate":
         effect = Gate()
         if "mix" in s:
             effect.mix = parse_length(s["mix"]) * 100
@@ -247,7 +247,7 @@ class Flanger(Effect):
         return FXType.FLANGER
 
     @staticmethod
-    def from_dict(s: Mapping[str, str]):
+    def from_dict(s: Mapping[str, str]) -> "Flanger":
         effect = Flanger()
         if "period" in s:
             effect.period = parse_length(s["period"]) * 4
@@ -291,7 +291,7 @@ class Tapestop(Effect):
         return FXType.TAPESTOP
 
     @staticmethod
-    def from_dict(s: Mapping[str, str]):
+    def from_dict(s: Mapping[str, str]) -> "Tapestop":
         effect = Tapestop()
         if "speed" in s:
             effect.speed = parse_length(s["speed"]) * 0.16
@@ -325,7 +325,7 @@ class Sidechain(Effect):
         return FXType.SIDECHAIN
 
     @staticmethod
-    def from_dict(s: Mapping[str, str]):
+    def from_dict(s: Mapping[str, str]) -> "Sidechain":
         effect = Sidechain()
         if "period" in s:
             effect.frequency = 0.25 / parse_length(s["period"])
@@ -374,7 +374,7 @@ class Wobble(Effect):
         return FXType.WOBBLE
 
     @staticmethod
-    def from_dict(s: Mapping[str, str]):
+    def from_dict(s: Mapping[str, str]) -> "Wobble":
         effect = Wobble()
         if "waveLength" in s:
             effect.frequency = 0.25 / parse_length(s["waveLength"])
@@ -422,7 +422,7 @@ class Bitcrush(Effect):
         return FXType.BITCRUSH
 
     @staticmethod
-    def from_dict(s: Mapping[str, str]):
+    def from_dict(s: Mapping[str, str]) -> "Bitcrush":
         effect = Bitcrush()
         if "reduction" in s and s["reduction"].endswith("samples"):
             effect.amount = int(s["reduction"][:-7])
@@ -461,7 +461,7 @@ class RetriggerEx(Effect):
         return FXType.RETRIGGER_EX
 
     @staticmethod
-    def from_dict(s: Mapping[str, str]):
+    def from_dict(s: Mapping[str, str]) -> "RetriggerEx":
         effect = RetriggerEx()
         effect.update_period = 4.00
         if "waveLength" in s:
@@ -509,7 +509,7 @@ class PitchShift(Effect):
         return FXType.PITCH_SHIFT
 
     @staticmethod
-    def from_dict(s: Mapping[str, str]):
+    def from_dict(s: Mapping[str, str]) -> "PitchShift":
         effect = PitchShift()
         if "pitch" in s:
             effect.amount = int(float(s["pitch"]))
@@ -533,6 +533,15 @@ class PitchShiftEx(PitchShift):
     """A pitch shift variant with one currently unknown VOX parameter."""
 
     ex_param: float = 1.00
+
+    @staticmethod
+    def from_dict(s: Mapping[str, str]) -> "PitchShiftEx":
+        effect = PitchShiftEx()
+        if "pitch" in s:
+            effect.amount = int(float(s["pitch"]))
+        if "mix" in s:
+            effect.mix = parse_length(s["mix"]) * 100
+        return effect
 
     @property
     def effect_index(self) -> FXType:
@@ -565,7 +574,7 @@ class Tapescratch(Effect):
         return FXType.TAPESCRATCH
 
     @staticmethod
-    def from_dict(s: Mapping[str, str]):
+    def from_dict(s: Mapping[str, str]) -> "Tapescratch":
         return Tapescratch()
 
     def map_params(self, s: Sequence[int]) -> None:
@@ -599,7 +608,7 @@ class LowpassFilter(Effect):
         return FXType.LOW_PASS_FILTER
 
     @staticmethod
-    def from_dict(s: Mapping[str, str]):
+    def from_dict(s: Mapping[str, str]) -> "LowpassFilter":
         return LowpassFilter()
 
     def map_params(self, s: Sequence[int]) -> None:
@@ -632,7 +641,7 @@ class HighpassFilter(Effect):
         return FXType.HIGH_PASS_FILTER
 
     @staticmethod
-    def from_dict(s: Mapping[str, str]):
+    def from_dict(s: Mapping[str, str]) -> "HighpassFilter":
         return HighpassFilter()
 
     def map_params(self, s: Sequence[int]) -> None:
