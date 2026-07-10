@@ -127,6 +127,7 @@ SEGMENT_TYPE_MAP = [
 WHITESPACE_REGEX = re.compile(r"\s+")
 LASER_SCALE_DEFAULT = Fraction(1)
 LASER_SCALE_OLD = Fraction(1, 127)
+NORMALIZED_LASER_POSITION_VERSION = 12
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +135,8 @@ logger = logging.getLogger(__name__)
 @dataclasses.dataclass
 class VOXSongChartContainer(SongChartContainer):
     """Implementation of :class:`~sdvxparser.parser.base.SongChartContainer` for the VOX format."""
+
+    format_version: int = 0
 
     def write_vox(self, f: TextIO) -> None:
         """Method stub. This is a no-op."""
@@ -217,8 +220,12 @@ class VOXParser(Parser):
 
         if self._current_section == VOXSection.VERSION:
             self._vox_version = int(match["version"])
-            if self._vox_version <= 12:
-                self._laser_scale = LASER_SCALE_OLD
+            self.__song_chart_data.format_version = self._vox_version
+            self._laser_scale = (
+                LASER_SCALE_OLD
+                if self._vox_version < NORMALIZED_LASER_POSITION_VERSION
+                else LASER_SCALE_DEFAULT
+            )
         elif self._current_section == VOXSection.TIME_SIGNATURE:
             timepoint = match["timepoint"]
             upper = int(match["upper"])

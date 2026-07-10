@@ -26,6 +26,7 @@ __all__ = [
     "Bitcrush",
     "RetriggerEx",
     "PitchShift",
+    "PitchShiftEx",
     "Tapescratch",
     "LowpassFilter",
     "HighpassFilter",
@@ -62,6 +63,7 @@ class FXType(_StringifiableEnum):
     TAPESCRATCH = 10
     LOW_PASS_FILTER = 11
     HIGH_PASS_FILTER = 12
+    PITCH_SHIFT_EX = 13
 
 
 class PassFilterType(_StringifiableEnum):
@@ -527,6 +529,28 @@ class PitchShift(Effect):
 
 @_register_effect
 @dataclass
+class PitchShiftEx(PitchShift):
+    """A pitch shift variant with one currently unknown VOX parameter."""
+
+    ex_param: float = 1.00
+
+    @property
+    def effect_index(self) -> FXType:
+        return FXType.PITCH_SHIFT_EX
+
+    def to_vox_string(self) -> str:
+        return ",\t".join(
+            [
+                f"{self.effect_index.value}",
+                f"{self.mix:.2f}",
+                f"{self.amount:.2f}",
+                f"{self.ex_param:.2f}",
+            ]
+        )
+
+
+@_register_effect
+@dataclass
 class Tapescratch(Effect):
     """A class representing a tapescratch effect."""
 
@@ -715,6 +739,12 @@ def from_vox_params(effect_index: int, params: Sequence[float]) -> Effect:
             )
         case FXType.PITCH_SHIFT:
             return PitchShift(mix=get(0, 100.0), amount=int(get(1, 12)))
+        case FXType.PITCH_SHIFT_EX:
+            return PitchShiftEx(
+                mix=get(0, 100.0),
+                amount=int(get(1, 12)),
+                ex_param=get(2, 1.0),
+            )
         case FXType.TAPESCRATCH:
             return Tapescratch(
                 mix=get(0, 100.0),
