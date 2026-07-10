@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 output/
+sample/
 *.wav
 !sfx_renderer/knob.wav
 !sfx_renderer/click.wav
