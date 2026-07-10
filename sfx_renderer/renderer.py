@@ -18,14 +18,16 @@ from .audio import decode_audio as _decode_audio
 from .audio import encode_audio as _encode_audio
 from .events import FXRenderEvent
 from .fx_dsp import FXDSP
+from .note_sfx import NoteHitSFX
 from .vol_dsp import VolDSP
 
 DEFAULT_SAMPLE_RATE = 44100
 DEFAULT_CHANNELS = 2
 DEFAULT_KNOB_PATH = Path(__file__).with_name("knob.wav")
+DEFAULT_CLICK_PATH = Path(__file__).with_name("click.wav")
 
 
-class FXEffects(FXDSP, VolDSP):
+class FXEffects(FXDSP, VolDSP, NoteHitSFX):
     """Apply SDVX FX button and VOL effects to full-song audio."""
 
     def __init__(self, sample_rate: int = DEFAULT_SAMPLE_RATE, channels: int = DEFAULT_CHANNELS) -> None:
@@ -41,6 +43,8 @@ class FXEffects(FXDSP, VolDSP):
         offset_ms: float = 0.0,
         knob_path: str | Path | None = None,
         knob_volume: float = 1.0,
+        click_path: str | Path | None = None,
+        click_volume: float = 1.0,
     ) -> list[FXRenderEvent]:
         """Render a chart's FX button effects and write the processed full-song audio."""
         vox_path = Path(vox_path)
@@ -49,18 +53,22 @@ class FXEffects(FXDSP, VolDSP):
         if knob_path is None:
             knob_path = DEFAULT_KNOB_PATH
         knob_path = Path(knob_path) if knob_path else None
+        click_path = Path(click_path) if click_path else None
 
         with vox_path.open("r", encoding="utf-8-sig") as file:
             container = VOXParser().parse(file)
 
         audio = _decode_audio(audio_path, self.sample_rate, self.channels)
         knob_audio = _decode_audio(knob_path, self.sample_rate, self.channels) if knob_path and knob_path.exists() else None
+        click_audio = _decode_audio(click_path, self.sample_rate, self.channels) if click_path and click_path.exists() else None
         rendered, events = self.render_chart(
             container.chart_info,
             audio,
             offset_ms=offset_ms,
             knob_audio=knob_audio,
             knob_volume=knob_volume,
+            click_audio=click_audio,
+            click_volume=click_volume,
         )
         rendered = np.clip(rendered, -1.0, 1.0)
         _encode_audio(output_path, rendered, self.sample_rate, self.channels)
@@ -103,6 +111,8 @@ class FXEffects(FXDSP, VolDSP):
         offset_ms: float = 0.0,
         knob_audio: np.ndarray | None = None,
         knob_volume: float = 1.0,
+        click_audio: np.ndarray | None = None,
+        click_volume: float = 1.0,
     ) -> tuple[np.ndarray, list[FXRenderEvent]]:
         """Render all active FX button holds into a copy of ``audio``."""
         events = self._collect_events(chart, len(audio), offset_ms)
@@ -128,6 +138,8 @@ class FXEffects(FXDSP, VolDSP):
         self._render_vol_effects(chart, output, offset_ms=offset_ms)
         if knob_audio is not None and len(knob_audio) > 0 and knob_volume > 0:
             self._render_knob_sounds(chart, output, knob_audio, offset_ms=offset_ms, volume=knob_volume)
+        if click_audio is not None and len(click_audio) > 0 and click_volume > 0:
+            self._render_note_hit_sounds(chart, output, click_audio, offset_ms=offset_ms, volume=click_volume)
         return output, events
 
     def _collect_events(self, chart: ChartInfo, audio_samples: int, offset_ms: float) -> list[FXRenderEvent]:
@@ -207,6 +219,9 @@ def main() -> None:
     parser.add_argument("--knob-sound", type=Path, default=DEFAULT_KNOB_PATH, help="VOL side-to-side knob sound path.")
     parser.add_argument("--knob-volume", type=float, default=1.0, help="VOL knob sound gain.")
     parser.add_argument("--no-knob", action="store_true", help="Disable VOL side-to-side knob sounds.")
+    parser.add_argument("--note-hit", action="store_true", help="Overlay click sounds at BT/FX note starts.")
+    parser.add_argument("--click-sound", type=Path, default=DEFAULT_CLICK_PATH, help="BT/FX note-start click sound path.")
+    parser.add_argument("--click-volume", type=float, default=1.0, help="BT/FX note-start click sound gain.")
     args = parser.parse_args()
 
     renderer = FXEffects(sample_rate=args.sample_rate)
@@ -217,6 +232,8 @@ def main() -> None:
         offset_ms=args.offset_ms,
         knob_path=None if args.no_knob else args.knob_sound,
         knob_volume=args.knob_volume,
+        click_path=args.click_sound if args.note_hit else None,
+        click_volume=args.click_volume,
     )
     print(f"Rendered {len(events)} FX events to {args.output}")
 

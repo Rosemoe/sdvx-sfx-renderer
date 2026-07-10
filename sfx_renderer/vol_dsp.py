@@ -10,7 +10,7 @@ from scipy import signal
 from sdvxparser.classes.chart import ChartInfo
 from sdvxparser.classes.enums import EasingType, FilterIndex, NoteType, SegmentFlag
 
-from .audio import clamp
+from .audio import clamp, overlay_audio
 from .filters import FilterDSP
 
 _clamp = clamp
@@ -222,12 +222,5 @@ class VolDSP(FilterDSP):
         return (start_left and end_right) or (start_right and end_left)
 
     def _overlay_audio(self, output: np.ndarray, overlay: np.ndarray, start_sample: int, volume: float) -> None:
-        output_start = max(0, start_sample)
-        overlay_start = max(0, -start_sample)
-        if output_start >= len(output) or overlay_start >= len(overlay):
-            return
-        sample_count = min(len(output) - output_start, len(overlay) - overlay_start)
-        if sample_count <= 0:
-            return
-        output[output_start : output_start + sample_count] += overlay[overlay_start : overlay_start + sample_count] * volume
+        overlay_audio(output, overlay, start_sample, volume)
 

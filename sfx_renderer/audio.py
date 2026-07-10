@@ -63,6 +63,18 @@ def encode_audio(path: Path, audio: np.ndarray, sample_rate: int, channels: int)
     subprocess.run(command, input=np.asarray(audio, dtype=np.float32).tobytes(), check=True)
 
 
+def overlay_audio(output: np.ndarray, overlay: np.ndarray, start_sample: int, volume: float) -> None:
+    """Mix an audio clip into an output buffer, clipping it to the buffer bounds."""
+    output_start = max(0, start_sample)
+    overlay_start = max(0, -start_sample)
+    if output_start >= len(output) or overlay_start >= len(overlay):
+        return
+    sample_count = min(len(output) - output_start, len(overlay) - overlay_start)
+    if sample_count <= 0:
+        return
+    output[output_start : output_start + sample_count] += overlay[overlay_start : overlay_start + sample_count] * volume
+
+
 # Keep the former helper names available to callers during the package move.
 _clamp = clamp
 _mix = mix
