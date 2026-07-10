@@ -30,6 +30,7 @@ from .classes.effects import (
     Tapescratch,
     Wobble,
 )
+from .classes.enums import EasingType, FilterIndex, NoteType, SegmentFlag
 from .classes.time import TimePoint
 from .parser.vox import VOXParser
 
@@ -37,6 +38,7 @@ from .parser.vox import VOXParser
 DEFAULT_SAMPLE_RATE = 44100
 DEFAULT_CHANNELS = 2
 SIDE_VOL_EDGE_THRESHOLD = 1 / 127
+LASER_FILTER_BLOCK_SIZE = 256
 
 
 @dataclass(frozen=True)
@@ -172,6 +174,7 @@ class FXEffects:
                     f"duration_samples={event.end_sample - event.start_sample}"
                 )
             output[event.start_sample : event.end_sample] = self.apply(event.effect, segment, event.bpm)
+        self._render_vol_effects(chart, output, offset_ms=offset_ms)
         if knob_audio is not None and len(knob_audio) > 0 and knob_volume > 0:
             self._render_knob_sounds(chart, output, knob_audio, offset_ms=offset_ms, volume=knob_volume)
         return output, events
@@ -243,6 +246,162 @@ class FXEffects:
 
     def _beats_to_samples(self, beats: float, bpm: float) -> int:
         return max(1, int(round((60.0 / max(bpm, 1.0)) * beats * self.sample_rate)))
+
+    def _render_vol_effects(self, chart: ChartInfo, output: np.ndarray, *, offset_ms: float) -> None:
+        offset_seconds = Decimal(str(offset_ms)) / Decimal(1000)
+        laser_value = np.zeros(len(output), dtype=np.float32)
+        laser_filter = np.full(len(output), -1, dtype=np.int16)
+
+        for note_type, vol_dict in ((NoteType.VOL_L, chart.note_data.vol_l), (NoteType.VOL_R, chart.note_data.vol_r)):
+            points = sorted(vol_dict.items())
+            for (time_i, vol_i), (time_f, vol_f) in zip(points, points[1:]):
+                if SegmentFlag.END in vol_i.point_type:
+                    continue
+
+                start_time = chart._get_elapsed_time(time_i) + offset_seconds
+                end_time = chart._get_elapsed_time(time_f) + offset_seconds
+                start_sample = int(round(float(start_time) * self.sample_rate))
+                end_sample = int(round(float(end_time) * self.sample_rate))
+                if end_sample <= start_sample:
+                    continue
+
+                clip_start = max(0, start_sample)
+                clip_end = min(len(output), end_sample)
+                if clip_end <= clip_start:
+                    continue
+
+                full_count = end_sample - start_sample
+                sample_offset = clip_start - start_sample
+                count = clip_end - clip_start
+                phase = (np.arange(sample_offset, sample_offset + count, dtype=np.float32) / max(full_count, 1))
+                phase = self._apply_laser_easing(phase, vol_i.ease_type)
+                lane_curve = float(vol_i.end) + (float(vol_f.start) - float(vol_i.end)) * phase
+                value_curve = self._laser_value_for_lane(note_type, lane_curve)
+
+                current = laser_value[clip_start:clip_end]
+                update_mask = value_curve > current
+                if np.any(update_mask):
+                    current[update_mask] = value_curve[update_mask]
+                    filter_view = laser_filter[clip_start:clip_end]
+                    filter_view[update_mask] = vol_i.filter_index.value
+
+        active = laser_filter >= 0
+        if not np.any(active):
+            return
+
+        edges = np.flatnonzero(
+            np.r_[True, (active[1:] != active[:-1]) | (laser_filter[1:] != laser_filter[:-1]), True]
+        )
+        rendered_ranges = 0
+        for start, end in zip(edges[:-1], edges[1:]):
+            if not active[start]:
+                continue
+            filter_index = self._coerce_filter_index(int(laser_filter[start]))
+            output[start:end] = self._apply_laser_filter(output[start:end], laser_value[start:end], filter_index)
+            rendered_ranges += 1
+
+        if os.environ.get("SDVX_FX_DEBUG"):
+            print(f"VOL laser filter ranges: {rendered_ranges}")
+
+    def _apply_laser_easing(self, phase: np.ndarray, ease_type: EasingType) -> np.ndarray:
+        phase = np.clip(phase, 0.0, 1.0)
+        if ease_type == EasingType.EASE_IN_SINE:
+            return np.sin(phase * np.pi / 2).astype(np.float32)
+        if ease_type == EasingType.EASE_OUT_SINE:
+            return (np.sin((phase - 1.0) * np.pi / 2) + 1.0).astype(np.float32)
+        return phase
+
+    def _laser_value_for_lane(self, note_type: NoteType, lane_curve: np.ndarray) -> np.ndarray:
+        if note_type == NoteType.VOL_R:
+            return (1.0 - lane_curve).astype(np.float32)
+        return lane_curve.astype(np.float32)
+
+    def _coerce_filter_index(self, value: int) -> FilterIndex:
+        try:
+            return FilterIndex(value)
+        except ValueError:
+            return FilterIndex.PEAK
+
+    def _apply_laser_filter(self, segment: np.ndarray, values: np.ndarray, filter_index: FilterIndex) -> np.ndarray:
+        if filter_index in (FilterIndex.LPF_ALT, FilterIndex.LPF):
+            return self._apply_laser_pass_filter(segment, values, "lowpass")
+        if filter_index in (FilterIndex.HPF_ALT, FilterIndex.HPF):
+            return self._apply_laser_pass_filter(segment, values, "highpass")
+        if filter_index == FilterIndex.BITCRUSH:
+            return self._apply_laser_bitcrusher(segment, values)
+        return self._apply_laser_peaking_filter(segment, values)
+
+    def _apply_laser_peaking_filter(self, segment: np.ndarray, values: np.ndarray) -> np.ndarray:
+        wet = np.empty_like(segment)
+        for start in range(0, len(segment), LASER_FILTER_BLOCK_SIZE):
+            end = min(start + LASER_FILTER_BLOCK_SIZE, len(segment))
+            v = float(values[(start + end - 1) // 2])
+            freq = self._geom_lerp(50.0, 9000.0, v)
+            if freq < 100.0:
+                wet[start:end] = segment[start:end]
+                continue
+            base_gain_db = 34.0 * min(v / 0.35, 1.0) if v < 0.35 else 34.0 - (34.0 - 15.85) * ((v - 0.35) / 0.65)
+            b, a = self._biquad_peaking(freq, bandwidth=1.2, gain_db=base_gain_db * 0.5)
+            wet[start:end] = signal.lfilter(b, a, segment[start:end], axis=0)
+        return wet
+
+    def _apply_laser_pass_filter(self, segment: np.ndarray, values: np.ndarray, filter_type: str) -> np.ndarray:
+        wet = np.empty_like(segment)
+        for start in range(0, len(segment), LASER_FILTER_BLOCK_SIZE):
+            end = min(start + LASER_FILTER_BLOCK_SIZE, len(segment))
+            v = float(values[(start + end - 1) // 2])
+            if filter_type == "lowpass":
+                freq = self._geom_lerp(15000.0, 800.0, v)
+                if freq > 14800.0:
+                    wet[start:end] = segment[start:end]
+                    continue
+                b, a = self._biquad_pass(freq, q=3.6, filter_type="lowpass")
+            else:
+                freq = self._geom_lerp(100.0, 2200.0, v)
+                if freq < 200.0:
+                    wet[start:end] = segment[start:end]
+                    continue
+                b, a = self._biquad_pass(freq, q=5.0, filter_type="highpass")
+            wet[start:end] = signal.lfilter(b, a, segment[start:end], axis=0)
+        return wet
+
+    def _apply_laser_bitcrusher(self, segment: np.ndarray, values: np.ndarray) -> np.ndarray:
+        wet = segment.copy()
+        for start in range(0, len(segment), LASER_FILTER_BLOCK_SIZE):
+            end = min(start + LASER_FILTER_BLOCK_SIZE, len(segment))
+            v = float(values[(start + end - 1) // 2])
+            hold = max(1, int(round(v * 30.0)))
+            for sample in range(start, end, hold):
+                wet[sample : min(sample + hold, end)] = wet[sample]
+        return wet
+
+    def _geom_lerp(self, start: float, end: float, value: float) -> float:
+        value = _clamp(value, 0.0, 1.0)
+        return float(np.exp(np.log(start) + (np.log(end) - np.log(start)) * value))
+
+    def _biquad_peaking(self, freq: float, *, bandwidth: float, gain_db: float) -> tuple[np.ndarray, np.ndarray]:
+        freq = _clamp(freq, 20.0, self.sample_rate / 2.0 - 100.0)
+        omega = 2 * np.pi * freq / self.sample_rate
+        sin_omega = np.sin(omega)
+        cos_omega = np.cos(omega)
+        a_gain = 10 ** (gain_db / 40.0)
+        alpha = sin_omega * np.sinh(np.log(2.0) / 2.0 * bandwidth * omega / max(sin_omega, 1e-8))
+        b = np.array([1 + alpha * a_gain, -2 * cos_omega, 1 - alpha * a_gain], dtype=np.float64)
+        a = np.array([1 + alpha / a_gain, -2 * cos_omega, 1 - alpha / a_gain], dtype=np.float64)
+        return b / a[0], a / a[0]
+
+    def _biquad_pass(self, freq: float, *, q: float, filter_type: str) -> tuple[np.ndarray, np.ndarray]:
+        freq = _clamp(freq, 20.0, self.sample_rate / 2.0 - 100.0)
+        omega = 2 * np.pi * freq / self.sample_rate
+        sin_omega = np.sin(omega)
+        cos_omega = np.cos(omega)
+        alpha = sin_omega / (2.0 * max(q, 0.1))
+        if filter_type == "highpass":
+            b = np.array([(1 + cos_omega) / 2, -(1 + cos_omega), (1 + cos_omega) / 2], dtype=np.float64)
+        else:
+            b = np.array([(1 - cos_omega) / 2, 1 - cos_omega, (1 - cos_omega) / 2], dtype=np.float64)
+        a = np.array([1 + alpha, -2 * cos_omega, 1 - alpha], dtype=np.float64)
+        return b / a[0], a / a[0]
 
     def _render_knob_sounds(
         self,
