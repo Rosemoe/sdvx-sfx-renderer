@@ -15,10 +15,33 @@ from .filters import FilterDSP
 
 _clamp = clamp
 
-SIDE_VOL_EDGE_THRESHOLD = 1 / 127
 LASER_FILTER_BLOCK_SIZE = 256
 LASER_PASS_FILTER_BLOCK_SIZE = 64
 LASER_V_EASING_PER_44100_FRAME = 0.01
+
+# Sampled from KSM's PeakingFilterDSP lookup tables. The final point is index
+# 255; the preceding values are every eighth table entry.
+KSM_PEAK_TABLE_POSITIONS = np.array([*(index / 255 for index in range(0, 256, 8)), 1.0], dtype=np.float32)
+KSM_PEAK_FREQUENCIES = np.array(
+    [
+        50.0000, 57.6169, 80.4440, 118.4107, 171.3997, 239.2472, 321.7439, 418.6352,
+        529.6227, 654.3651, 792.4791, 943.5414, 1107.0899, 1282.6252, 1469.6130,
+        1667.4855, 1875.6437, 2093.4597, 2320.2787, 2555.4216, 2798.1873, 3047.8554,
+        3303.6888, 3564.9362, 3830.8348, 4100.6133, 4610.3561, 5356.2081, 6103.6017,
+        6851.7587, 7599.9059, 8347.2783, 9000.0000,
+    ],
+    dtype=np.float32,
+)
+KSM_PEAK_GAINS_DB = np.array(
+    [
+        0.0000, 6.3948, 12.7897, 19.1845, 25.5794, 30.6894, 31.2273, 31.7652,
+        32.3031, 32.8410, 33.3788, 33.9167, 33.5454, 33.0075, 32.4696, 31.9317,
+        31.3939, 30.8560, 30.3181, 29.7802, 29.2423, 28.7044, 28.1666, 27.6287,
+        27.0908, 26.5529, 25.4623, 23.8263, 22.1902, 20.5541, 18.9181, 17.2820,
+        15.8505,
+    ],
+    dtype=np.float32,
+)
 
 
 class VolDSP(FilterDSP):
@@ -111,11 +134,11 @@ class VolDSP(FilterDSP):
         for start in range(0, len(segment), LASER_FILTER_BLOCK_SIZE):
             end = min(start + LASER_FILTER_BLOCK_SIZE, len(segment))
             v = float(values[(start + end - 1) // 2])
-            freq = self._geom_lerp(50.0, 9000.0, v)
+            freq = float(np.interp(v, KSM_PEAK_TABLE_POSITIONS, KSM_PEAK_FREQUENCIES))
             if freq < 100.0:
                 wet[start:end] = segment[start:end]
                 continue
-            base_gain_db = 34.0 * min(v / 0.35, 1.0) if v < 0.35 else 34.0 - (34.0 - 15.85) * ((v - 0.35) / 0.65)
+            base_gain_db = float(np.interp(v, KSM_PEAK_TABLE_POSITIONS, KSM_PEAK_GAINS_DB))
             b, a = self._biquad_peaking(freq, bandwidth=1.2, gain_db=base_gain_db * 0.5)
             wet[start:end] = signal.lfilter(b, a, segment[start:end], axis=0)
         return wet
@@ -196,7 +219,7 @@ class VolDSP(FilterDSP):
     ) -> None:
         offset_seconds = Decimal(str(offset_ms)) / Decimal(1000)
         for note_type, timepoint, vol in sorted(chart.note_data.iter_vols(), key=lambda item: item[1]):
-            if not self._is_side_to_side_vol(vol.start, vol.end):
+            if not self._is_vol_slam(vol.start, vol.end):
                 continue
             start = chart._get_elapsed_time(timepoint) + offset_seconds
             start_sample = int(round(float(start) * self.sample_rate))
@@ -210,16 +233,8 @@ class VolDSP(FilterDSP):
                 )
             self._overlay_audio(output, knob_audio, start_sample, volume)
 
-    def _is_side_to_side_vol(self, start, end) -> bool:
-        start_value = float(start)
-        end_value = float(end)
-        if start_value == end_value:
-            return False
-        start_left = start_value <= SIDE_VOL_EDGE_THRESHOLD
-        start_right = start_value >= 1.0 - SIDE_VOL_EDGE_THRESHOLD
-        end_left = end_value <= SIDE_VOL_EDGE_THRESHOLD
-        end_right = end_value >= 1.0 - SIDE_VOL_EDGE_THRESHOLD
-        return (start_left and end_right) or (start_right and end_left)
+    def _is_vol_slam(self, start, end) -> bool:
+        return float(start) != float(end)
 
     def _overlay_audio(self, output: np.ndarray, overlay: np.ndarray, start_sample: int, volume: float) -> None:
         overlay_audio(output, overlay, start_sample, volume)
