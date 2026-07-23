@@ -116,14 +116,20 @@ class FXDSP(FilterDSP):
         return max(1, self._beats_to_samples(4.0, bpm) // (wavelength * 2))
 
     def _apply_retrigger(self, effect: Retrigger | RetriggerEx, segment: np.ndarray, bpm: float) -> np.ndarray:
-        # Both values are denominators of a 4-beat measure: waveLength=16
-        # loops a 1/16-measure sample, while updatePeriod=2 resamples every
-        # 1/2 measure.
-        wavelength = max(float(effect.wavelength), 1.0)
-        update_period = max(float(effect.update_period), 1.0)
-        chunk_samples = self._beats_to_samples(4.0 / wavelength, bpm)
-        update_samples = self._beats_to_samples(4.0 / update_period, bpm)
-        chunks_per_update = update_samples / chunk_samples
+        if len(segment) == 0:
+            return segment.copy()
+
+        mix = _clamp(effect.mix, 0.0, 100.0)
+        calculated_update_period = (60.0 / max(bpm, 1.0)) * effect.update_period
+        final_update_period = _clamp(calculated_update_period, 0.1, 8.0)
+        feedback = _clamp(effect.feedback, 0.1, 1.0)
+        wavelength = max(1, min(int(effect.wavelength), 32))
+        amount = _clamp(effect.amount, 0.1, 1.0)
+        decay = _clamp(effect.decay, 0.0, 1.0)
+
+        period_samples = max(1, int(final_update_period * self.sample_rate) // wavelength)
+        amount_samples = int(period_samples * amount)
+        decay_samples = int(amount_samples * decay)
         if os.environ.get("SDVX_FX_DEBUG"):
             print(
                 "Retrigger debug: "
@@ -131,25 +137,32 @@ class FXDSP(FilterDSP):
                 f"bpm={bpm:.3f} "
                 f"waveLength={effect.wavelength} "
                 f"updatePeriod={effect.update_period:.3f} "
-                f"chunk_samples={chunk_samples} "
-                f"chunk_sec={chunk_samples / self.sample_rate:.6f} "
-                f"chunks_per_update={chunks_per_update:.3f} "
-                f"update_samples={update_samples} "
-                f"update_sec={update_samples / self.sample_rate:.6f}"
+                f"calculatedUpdatePeriod={calculated_update_period:.6f} "
+                f"period_samples={period_samples} "
+                f"period_sec={period_samples / self.sample_rate:.6f} "
+                f"amount_samples={amount_samples} "
+                f"decay_samples={decay_samples}"
             )
         indices = np.arange(len(segment))
+        phase = indices % period_samples
+        repeats = (indices // period_samples) % wavelength
         if isinstance(effect, RetriggerEx):
-            source_indices = indices % chunk_samples
-            repeats = indices // chunk_samples
+            source_indices = phase
         else:
-            local = indices % update_samples
-            source_indices = indices - local + (local % chunk_samples)
-            repeats = local // chunk_samples
-        source_indices = np.minimum(source_indices, len(segment) - 1)
-        gain = np.power(max(effect.feedback, 0.0), repeats, dtype=np.float64)
-        gain = np.maximum(gain, max(effect.decay, 0.0)) * max(effect.amount, 0.0)
-        wet = segment[source_indices] * gain[:, None]
-        return _mix(segment, wet.astype(np.float32), effect.mix)
+            source_indices = indices - period_samples * repeats
+
+        wet = np.zeros_like(segment)
+        active = phase <= amount_samples
+        if np.any(active):
+            gain = np.power(feedback, repeats[active], dtype=np.float64)
+            if decay_samples > 0:
+                active_phase = phase[active]
+                fading = active_phase > amount_samples - decay_samples
+                if np.any(fading):
+                    gain[fading] *= (amount_samples - active_phase[fading]) / decay_samples
+            wet[active] = segment[source_indices[active]] * gain[:, None]
+
+        return _mix(segment, wet, mix)
 
     def _apply_gate(self, effect: Gate, segment: np.ndarray, bpm: float) -> np.ndarray:
         period = self._bar_subdivision_samples(effect.wavelength, bpm)
