@@ -35,6 +35,7 @@ PITCH_SHIFT_OVERLAP = 0.4
 PITCH_SHIFT_MIN_PERIOD_44100 = 132
 PITCH_SHIFT_MAX_PERIOD_44100 = 882
 PITCH_SHIFT_CORRELATION_WINDOW_44100 = 256
+TAPESTOP_BLOCK_SIZE = 1024
 TAPESCRATCH_BLOCK_SIZE = 1024
 FLANGER_MIN_DELAY_MS = 0.1
 FLANGER_MAX_DELAY_MS = 3.0
@@ -253,18 +254,47 @@ class FXDSP(FilterDSP):
         return np.clip(processed, -1.0, 1.0).astype(np.float32)
 
     def _apply_tapestop(self, effect: Tapestop, segment: np.ndarray) -> np.ndarray:
-        n = len(segment)
-        speed_floor = _clamp(effect.rate, 0.0, 1.0)
-        t = np.linspace(0.0, 1.0, n, dtype=np.float64)
-        speed = speed_floor + (1.0 - speed_floor) * np.power(1.0 - t, max(effect.speed / 8.0, 0.1))
-        read_positions = np.cumsum(speed)
-        read_positions -= read_positions[0]
-        read_positions = np.clip(read_positions, 0, n - 1)
-        wet = np.zeros_like(segment)
-        indices = np.arange(n)
-        for channel in range(segment.shape[1]):
-            wet[:, channel] = np.interp(read_positions, indices, segment[:, channel])
-        return _mix(segment, wet, effect.mix)
+        """Apply the game's block-based TapeStop algorithm."""
+        if len(segment) == 0:
+            return segment.copy()
+
+        mix = _clamp(effect.mix / 100.0, 0.0, 1.0)
+        speed = _clamp(effect.speed, 1.0, 10.0)
+        rate = _clamp(effect.rate, 0.1, 2.0)
+        rate_samples = max(1, int(rate * self.sample_rate))
+        output = np.empty_like(segment)
+        capture = np.zeros((rate_samples, segment.shape[1]), dtype=np.float64)
+
+        # The caller resets these fields once per TapeStop event, then invokes
+        # ProcessTapeStopInternal for consecutive fixed-size audio blocks.
+        read_index = -1
+        read_phase = 0.0
+        elapsed_samples = 0
+
+        for start in range(0, len(segment), TAPESTOP_BLOCK_SIZE):
+            end = min(start + TAPESTOP_BLOCK_SIZE, len(segment))
+            block = segment[start:end]
+
+            # The game switches a whole processing block to dry output once
+            # that block would reach the configured rate duration.
+            if elapsed_samples + len(block) >= rate_samples:
+                output[start:end] = block * (1.0 - mix)
+                continue
+
+            capture[elapsed_samples : elapsed_samples + len(block)] = block
+            for offset, dry in enumerate(block):
+                if read_phase < 1.0:
+                    previous_read_index = read_index
+                    read_index += 1
+                    read_phase += 1.0 + previous_read_index * speed / rate_samples
+
+                envelope = 1.0 - elapsed_samples / rate_samples
+                wet = capture[read_index]
+                output[start + offset] = wet * (mix * envelope) + dry * (1.0 - mix)
+                elapsed_samples += 1
+                read_phase -= 1.0
+
+        return output
 
     def _apply_sidechain(self, effect: Sidechain, segment: np.ndarray, bpm: float) -> np.ndarray:
         if len(segment) == 0:
