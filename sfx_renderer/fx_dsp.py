@@ -34,13 +34,9 @@ _mix = mix
 PITCH_SHIFT_CHUNK_SIZE_44100 = 700
 PITCH_SHIFT_OVERLAP = 0.4
 PITCH_SHIFT_PREROLL_CHUNKS = 4
-FLANGER_DELAY_SAMPLES_44100 = 30.0
-FLANGER_DEPTH_SAMPLES_44100 = 45.0
-FLANGER_OUTPUT_VOLUME = 0.75
-FLANGER_LOW_SHELF_FREQ = 250.0
-FLANGER_LOW_SHELF_Q = 0.5
-FLANGER_LOW_SHELF_GAIN_DB = -20.0
-FLANGER_PREROLL_SAMPLES_44100 = 128
+FLANGER_MIN_DELAY_MS = 0.1
+FLANGER_MAX_DELAY_MS = 3.0
+FLANGER_MAX_STAGE = 4.0
 
 
 class FXDSP(FilterDSP):
@@ -95,7 +91,7 @@ class FXDSP(FilterDSP):
         return max(2, int(round(PITCH_SHIFT_CHUNK_SIZE_44100 * self.sample_rate / 44100)))
 
     def _render_flanger_event(self, output: np.ndarray, event: FXRenderEvent[Flanger]) -> None:
-        preroll = max(1, int(round(FLANGER_PREROLL_SAMPLES_44100 * self.sample_rate / 44100)))
+        preroll = self._flanger_preroll_samples(event.effect)
         context_start = max(0, event.start_sample - preroll)
         context = output[context_start : event.end_sample].copy()
         active_start = event.start_sample - context_start
@@ -105,11 +101,16 @@ class FXDSP(FilterDSP):
     def _apply_isolated_flanger(self, effect: Flanger, segment: np.ndarray, bpm: float) -> np.ndarray:
         if len(segment) < 2:
             return segment.copy()
-        requested = max(1, int(round(FLANGER_PREROLL_SAMPLES_44100 * self.sample_rate / 44100)))
-        preroll = min(requested, len(segment) - 1)
+        preroll = min(self._flanger_preroll_samples(effect), len(segment) - 1)
         context = np.concatenate((segment[1 : preroll + 1][::-1], segment), axis=0)
         processed = self._apply_flanger(effect, context, bpm, active_start_sample=preroll)
         return processed[preroll:]
+
+    def _flanger_preroll_samples(self, effect: Flanger) -> int:
+        base_delay = _clamp(effect.period, FLANGER_MIN_DELAY_MS, FLANGER_MAX_DELAY_MS) * self.sample_rate / 1000.0
+        depth = _clamp(effect.stereo_width, 0, 100) * 0.01 * base_delay
+        stages = int(np.ceil(_clamp(effect.hicut_gain, 0.0, FLANGER_MAX_STAGE))) + 1
+        return max(1, int(np.ceil(base_delay + depth)) * stages)
 
     def _bar_subdivision_samples(self, wavelength: int, bpm: float) -> int:
         wavelength = max(1, wavelength)
@@ -193,72 +194,54 @@ class FXDSP(FilterDSP):
             return segment.copy()
 
         mix = _clamp(effect.mix / 100.0, 0.0, 1.0)
-        if mix == 0.0:
-            return segment.copy()
-
-        sample_rate_scale = self.sample_rate / 44100.0
-        base_delay = FLANGER_DELAY_SAMPLES_44100 * sample_rate_scale
-        depth = FLANGER_DEPTH_SAMPLES_44100 * sample_rate_scale
-        max_delay = int(np.ceil(base_delay + depth)) + 2
-        ring_size = max(self.sample_rate * 3, max_delay + 2)
-        ring = np.zeros((ring_size, segment.shape[1]), dtype=np.float64)
-        output = segment.astype(np.float64, copy=True)
-        feedback = _clamp(effect.feedback, 0.0, 1.0)
-        stereo_width = _clamp(effect.stereo_width / 100.0, 0.0, 1.0)
-        gain = (1.0 - mix) + FLANGER_OUTPUT_VOLUME * mix
-        period_samples = self._beats_to_samples(max(effect.period, 0.01), bpm)
-        lfo_step = 1.0 / period_samples
-        lfo_phase = 0.0
-        cursor = 0
         active_start_sample = max(0, min(active_start_sample, len(segment)))
+        base_delay = _clamp(effect.period, FLANGER_MIN_DELAY_MS, FLANGER_MAX_DELAY_MS) * self.sample_rate / 1000.0
+        modulation_depth = _clamp(effect.stereo_width, 0, 100) * 0.01 * base_delay
 
-        b, a = self._biquad_low_shelf(
-            FLANGER_LOW_SHELF_FREQ,
-            q=FLANGER_LOW_SHELF_Q,
-            gain_db=FLANGER_LOW_SHELF_GAIN_DB,
-        )
-        input1 = np.zeros(segment.shape[1], dtype=np.float64)
-        input2 = np.zeros(segment.shape[1], dtype=np.float64)
-        output1 = np.zeros(segment.shape[1], dtype=np.float64)
-        output2 = np.zeros(segment.shape[1], dtype=np.float64)
+        # The legacy VOX parameter names are misleading: feedback is the LFO
+        # frequency control (feedback / 2 Hz), while hiCutGain is a cascade
+        # stage count with an optional fractional initial stage.
+        lfo_angular_step = max(effect.feedback, 0.0) * np.pi / self.sample_rate
+        stage_amount = _clamp(effect.hicut_gain, 0.0, FLANGER_MAX_STAGE)
+        first_stage = int(np.ceil(stage_amount))
+        fractional_stage = first_stage - stage_amount
+        history_samples = max(1, int(np.ceil(base_delay + modulation_depth)))
+        processed = segment.astype(np.float64, copy=True)
 
-        for frame in range(len(segment)):
-            dry = segment[frame].astype(np.float64, copy=False)
-            if frame < active_start_sample:
-                ring[cursor] = dry
-                cursor = (cursor + 1) % ring_size
-                continue
+        for stage_index in range(first_stage, -1, -1):
+            output = processed.copy()
+            start = max(0, active_start_sample - stage_index * history_samples)
+            if stage_index == first_stage:
+                wet_gain = mix - (1.0 - mix) * fractional_stage
+                dry_gain = (1.0 - mix) + mix * fractional_stage
+            else:
+                wet_gain = mix
+                dry_gain = 1.0 - mix
 
-            delayed = np.zeros(segment.shape[1], dtype=np.float64)
-            for channel in range(segment.shape[1]):
-                phase = lfo_phase if channel == 0 else (lfo_phase + stereo_width / 2.0) % 1.0
-                lfo = phase * 2.0 if phase < 0.5 else 2.0 - phase * 2.0
-                delay_frames = max(1.0, base_delay + lfo * depth)
-                delay_int = int(delay_frames)
-                fraction = delay_frames - delay_int
-                first = ring[(cursor - delay_int) % ring_size, channel]
-                second = ring[(cursor - delay_int - 1) % ring_size, channel]
-                delayed[channel] = first + (second - first) * fraction
+            for frame in range(start, len(processed)):
+                phase = (frame - stage_index * history_samples) * lfo_angular_step
+                left_delay = base_delay + np.sin(phase) * modulation_depth
+                right_delay = base_delay - np.sin(phase) * modulation_depth
+                delayed = np.zeros(processed.shape[1], dtype=np.float64)
 
-            feedback_input = (dry + delayed * feedback) * gain
-            filtered = (
-                b[0] * feedback_input
-                + b[1] * input1
-                + b[2] * input2
-                - a[1] * output1
-                - a[2] * output2
-            )
-            input2 = input1.copy()
-            input1 = feedback_input.copy()
-            output2 = output1.copy()
-            output1 = filtered.copy()
-            ring[cursor] = filtered
-            output[frame] = (dry + delayed * mix) * gain
+                for channel, delay in enumerate((left_delay, right_delay)):
+                    if channel >= processed.shape[1]:
+                        break
+                    read_position = frame - delay
+                    read_index = int(np.floor(read_position))
+                    if read_index < 0:
+                        continue
+                    fraction = read_position - read_index
+                    first = processed[read_index, channel]
+                    second = processed[min(read_index + 1, len(processed) - 1), channel]
+                    delayed[channel] = first + (second - first) * fraction
 
-            cursor = (cursor + 1) % ring_size
-            lfo_phase = (lfo_phase + lfo_step) % 1.0
+                output[frame] = dry_gain * processed[frame] + wet_gain * delayed
+                if stage_amount >= 1.0 and stage_index == 0:
+                    output[frame] *= 1.5
+            processed = output
 
-        return output.astype(np.float32)
+        return np.clip(processed, -1.0, 1.0).astype(np.float32)
 
     def _apply_tapestop(self, effect: Tapestop, segment: np.ndarray) -> np.ndarray:
         n = len(segment)
