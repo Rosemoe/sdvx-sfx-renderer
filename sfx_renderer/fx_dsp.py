@@ -275,23 +275,35 @@ class FXDSP(FilterDSP):
         return _mix(segment, wet, effect.mix)
 
     def _apply_sidechain(self, effect: Sidechain, segment: np.ndarray, bpm: float) -> np.ndarray:
-        period = self._beats_to_samples(1.0 / max(effect.frequency, 0.01), bpm)
-        attack = int(effect.attack / 1000 * self.sample_rate)
-        hold = int(effect.hold / 1000 * self.sample_rate)
-        release = int(effect.release / 1000 * self.sample_rate)
-        phase = np.arange(len(segment)) % period
+        if len(segment) == 0:
+            return segment.copy()
+
+        mix = _clamp(effect.mix / 100.0, 0.0, 1.0)
+        cycles_per_beat = max(effect.frequency, 0.01)
+        calculated_period = (60.0 / max(bpm, 1.0)) / cycles_per_beat
+        period_seconds = max(calculated_period, 0.1)
+        period_samples = max(1, int(period_seconds * self.sample_rate))
+        attack = _clamp(effect.attack, 0, 100)
+        hold = _clamp(effect.hold, 0, 100)
+        release = _clamp(effect.release, 0, 100)
+        attack_samples = int(period_samples * attack * 0.002)
+        hold_samples = int(period_samples * hold * 0.003)
+        release_samples = int(period_samples * release * 0.005)
+
+        phase = np.arange(len(segment)) % period_samples
         envelope = np.ones(len(segment), dtype=np.float32)
-        low = 0.35
-        if attack > 0:
-            attack_mask = phase < attack
-            envelope[attack_mask] = 1.0 - (1.0 - low) * (phase[attack_mask] / attack)
-        hold_mask = (phase >= attack) & (phase < attack + hold)
-        envelope[hold_mask] = low
-        if release > 0:
-            release_mask = (phase >= attack + hold) & (phase < attack + hold + release)
-            rel_phase = (phase[release_mask] - attack - hold) / release
-            envelope[release_mask] = low + (1.0 - low) * rel_phase
-        return _mix(segment, segment * envelope[:, None], effect.mix)
+        if attack_samples > 0:
+            attack_mask = phase < attack_samples
+            envelope[attack_mask] = 1.0 - phase[attack_mask] / attack_samples
+        hold_start = attack_samples
+        hold_end = hold_start + hold_samples
+        envelope[(phase >= hold_start) & (phase < hold_end)] = 0.0
+        if release_samples > 0:
+            release_end = hold_end + release_samples
+            release_mask = (phase >= hold_end) & (phase < release_end)
+            envelope[release_mask] = (phase[release_mask] - hold_end) / release_samples
+
+        return segment * ((1.0 - mix) + mix * envelope[:, None])
 
     def _apply_wobble(self, effect: Wobble, segment: np.ndarray, bpm: float) -> np.ndarray:
         block_size = 1024
