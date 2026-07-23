@@ -35,6 +35,7 @@ PITCH_SHIFT_OVERLAP = 0.4
 PITCH_SHIFT_MIN_PERIOD_44100 = 132
 PITCH_SHIFT_MAX_PERIOD_44100 = 882
 PITCH_SHIFT_CORRELATION_WINDOW_44100 = 256
+TAPESCRATCH_BLOCK_SIZE = 1024
 FLANGER_MIN_DELAY_MS = 0.1
 FLANGER_MAX_DELAY_MS = 3.0
 FLANGER_MAX_STAGE = 4.0
@@ -560,15 +561,123 @@ class FXDSP(FilterDSP):
         return output.astype(np.float32)
 
     def _apply_tapescratch(self, effect: Tapescratch, segment: np.ndarray) -> np.ndarray:
-        n = len(segment)
-        t = np.linspace(0.0, 1.0, n, dtype=np.float64)
-        wobble = np.sin(2 * np.pi * effect.curve_slope * t) * 0.12
-        read_positions = np.clip(np.arange(n) * (1.0 + wobble), 0, n - 1)
-        wet = np.zeros_like(segment)
-        indices = np.arange(n)
-        for channel in range(segment.shape[1]):
-            wet[:, channel] = np.interp(read_positions, indices, segment[:, channel])
-        return _mix(segment, wet, effect.mix)
+        """Render ``ProcessTapeScratchInternal`` for ``FXType.TAPESCRATCH``.
+
+        Tape Scratch has three game-defined phases.  Its attack slows down a
+        cached copy of the input while fading it out, hold removes the wet
+        signal, and release plays a prefetched buffer with the inverse speed
+        curve while restoring its volume.  Phase selection happens per audio
+        processing block, just as in the game routine.
+        """
+        if len(segment) == 0:
+            return segment.copy()
+
+        wet_ratio = _clamp(effect.mix / 100.0, 0.0, 1.0)
+        dry_ratio = 1.0 - wet_ratio
+        curve_slope = _clamp(effect.curve_slope, 1.0, 10.0)
+        attack_samples = max(1, int(_clamp(effect.attack, 0.1, 2.0) * self.sample_rate))
+        hold_samples = max(0, int(max(effect.hold, 0.0) * self.sample_rate))
+        release_samples = max(1, int(_clamp(effect.release, 0.1, 2.0) * self.sample_rate))
+
+        source = segment.astype(np.float64, copy=False)
+        output = np.empty_like(source)
+        attack_cache = np.zeros((attack_samples, source.shape[1]), dtype=np.float64)
+        attack_read_index = 0
+        attack_phase = 0.0
+        attack_gain = 1.0
+
+        # These fields mirror the release-related state stored at offsets
+        # +528, +544, +552, and +556 by ProcessTapeScratchInternal.
+        release_buffer: np.ndarray | None = None
+        release_step_count = 0
+        release_read_index = 0
+        release_started = False
+        release_elapsed = 0
+        elapsed = 0
+
+        for block_start in range(0, len(source), TAPESCRATCH_BLOCK_SIZE):
+            block_end = min(block_start + TAPESCRATCH_BLOCK_SIZE, len(source))
+            block = source[block_start:block_end]
+            block_size = len(block)
+            phase_end = elapsed + block_size
+            attack_or_hold_end = min(attack_samples, hold_samples)
+
+            if phase_end < attack_or_hold_end:
+                # Attack: cache the current block, then advance the read head
+                # less often as its curve accumulator grows.
+                cache_end = min(elapsed + block_size, attack_samples)
+                attack_cache[elapsed:cache_end] = block[: cache_end - elapsed]
+                for offset, dry in enumerate(block):
+                    if attack_phase < 1.0:
+                        read_index = attack_read_index
+                        attack_read_index += 1
+                        attack_phase += 1.0 + read_index * curve_slope / attack_samples
+
+                    read_index = min(attack_read_index - 1, attack_samples - 1)
+                    attack_gain = 1.0 - elapsed / attack_samples
+                    output[block_start + offset] = (
+                        attack_cache[read_index] * (wet_ratio * attack_gain) + dry * dry_ratio
+                    )
+                    elapsed += 1
+                    attack_phase -= 1.0
+                continue
+
+            if phase_end <= hold_samples:
+                # The game writes dry * (1 - mix) throughout hold, even when
+                # a processing block overlaps the attack boundary.
+                output[block_start:block_end] = block * dry_ratio
+                elapsed += block_size
+                continue
+
+            if phase_end > hold_samples + release_samples:
+                output[block_start:block_end] = block
+                continue
+
+            if not release_started:
+                # The game prefetches release_samples frames from the original
+                # source at the first release-processing block.  Missing tail
+                # samples remain zero in its allocated buffers.
+                release_buffer = np.zeros((release_samples, source.shape[1]), dtype=np.float64)
+                available = min(release_samples, len(source) - block_start)
+                release_buffer[:available] = source[block_start : block_start + available]
+                release_started = True
+
+                # Count the number of variable-rate read-head advances over
+                # the full release, which determines the initial buffer offset.
+                phase = 0.0
+                for sample in range(release_samples):
+                    if phase < 1.0:
+                        release_step_count += 1
+                        phase += 1.0 + sample * curve_slope / release_samples
+                    phase -= 1.0
+
+            assert release_buffer is not None
+            # ``v12`` is a function-local temporary in the original routine,
+            # so its fractional phase starts from zero for every process call.
+            release_phase = 0.0
+            for offset, dry in enumerate(block):
+                release_gain = attack_gain + (release_elapsed / release_samples) * (1.0 - attack_gain)
+                release_gain = min(release_gain, 1.0)
+                if release_phase < 1.0:
+                    release_read_index += 1
+                    release_phase = max(
+                        release_phase
+                        + 1.0
+                        + (release_samples - release_elapsed) * curve_slope / release_samples,
+                        1.0,
+                    )
+                release_phase -= 1.0
+
+                read_index = release_read_index + release_samples - release_step_count
+                read_index = max(0, min(read_index, release_samples - 1))
+                output[block_start + offset] = (
+                    release_buffer[read_index] * (wet_ratio * release_gain) + dry * dry_ratio
+                )
+                release_elapsed += 1
+
+            elapsed += block_size
+
+        return output.astype(segment.dtype, copy=False)
 
     def _apply_static_filter(self, segment: np.ndarray, filter_type: str, cutoff: float, mix: float, q: float) -> np.ndarray:
         nyquist = self.sample_rate / 2.0
