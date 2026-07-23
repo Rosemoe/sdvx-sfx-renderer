@@ -306,26 +306,166 @@ class FXDSP(FilterDSP):
         return segment * ((1.0 - mix) + mix * envelope[:, None])
 
     def _apply_wobble(self, effect: Wobble, segment: np.ndarray, bpm: float) -> np.ndarray:
+        if effect.filter_type == PassFilterType.LOW_PASS:
+            return self._apply_wobble_lowpass(effect, segment, bpm)
+        if effect.filter_type == PassFilterType.HIGH_PASS:
+            return self._apply_wobble_highpass(effect, segment, bpm)
+        if effect.filter_type == PassFilterType.BAND_PASS:
+            return self._apply_wobble_bandpass(effect, segment, bpm)
+        return segment.copy()
+
+    def _wobble_cutoff(self, effect: Wobble, phase: float) -> float:
+        """Calculate the game's Wobble cutoff for one LFO phase."""
+        low_cutoff = _clamp(min(effect.low_cutoff, effect.hi_cutoff), 20.0, self.sample_rate / 2.0 - 100.0)
+        high_cutoff = _clamp(max(effect.low_cutoff, effect.hi_cutoff), low_cutoff, self.sample_rate / 2.0 - 100.0)
+        phase = phase % 1.0
+        shape = effect.wave_shape.value
+
+        if shape == 0:
+            return low_cutoff + phase * (high_cutoff - low_cutoff)
+        if shape == 1:
+            return high_cutoff - phase * (high_cutoff - low_cutoff)
+        if shape == 2:
+            exponent = (np.sin(phase * 2.0 * np.pi) + 1.0) * 0.5
+            return low_cutoff * (high_cutoff / low_cutoff) ** exponent
+        if shape == 3:
+            exponent = phase * 2.0 if phase < 0.5 else 2.0 - phase * 2.0
+            return low_cutoff * (high_cutoff / low_cutoff) ** exponent
+        return high_cutoff if shape == 4 and phase >= 0.5 else low_cutoff
+
+    def _apply_wobble_lowpass(self, effect: Wobble, segment: np.ndarray, bpm: float) -> np.ndarray:
+        """Render ProcessWobbleInternal's low-pass filter branch."""
+        if len(segment) == 0:
+            return segment.copy()
+
         block_size = 1024
-        wet = np.zeros_like(segment)
-        beat_seconds = 60.0 / max(bpm, 1.0)
-        lfo_hz = max(effect.frequency / beat_seconds, 0.01)
-        nyquist = self.sample_rate / 2.0
+        channels = segment.shape[1]
+        output = np.empty_like(segment)
+        input_history = np.zeros((channels, 2), dtype=np.float64)
+        output_history = np.zeros((channels, 2), dtype=np.float64)
+        mix = _clamp(effect.mix / 100.0, 0.0, 1.0)
+        q = max(effect.bandwidth, 0.1)
+        output_gain = 1.0 - q * 0.04
+        period_samples = max(
+            1,
+            int(max((60.0 / max(bpm, 1.0)) / max(effect.frequency, 0.01), 0.1) * self.sample_rate),
+        )
+
         for start in range(0, len(segment), block_size):
             end = min(start + block_size, len(segment))
-            center = (start + end) / 2 / self.sample_rate
-            lfo = 0.5 + 0.5 * np.sin(2 * np.pi * lfo_hz * center)
-            cutoff = _clamp(effect.low_cutoff + (effect.hi_cutoff - effect.low_cutoff) * lfo, 20.0, nyquist - 100.0)
-            if effect.filter_type == PassFilterType.HIGH_PASS:
-                sos = signal.butter(2, cutoff, btype="highpass", fs=self.sample_rate, output="sos")
-            elif effect.filter_type == PassFilterType.BAND_PASS:
-                low = _clamp(cutoff / max(effect.bandwidth, 1.0), 20.0, nyquist - 200.0)
-                high = _clamp(cutoff * max(effect.bandwidth, 1.0), low + 20.0, nyquist - 100.0)
-                sos = signal.butter(2, [low, high], btype="bandpass", fs=self.sample_rate, output="sos")
+            phase = (start % period_samples) / period_samples
+            cutoff = self._wobble_cutoff(effect, phase)
+            b, a = self._biquad_pass(cutoff, q=q, filter_type="lowpass")
+            block = segment[start:end].astype(np.float64, copy=False)
+            filtered = np.empty_like(block)
+            for channel in range(channels):
+                zi = signal.lfiltic(b, a, output_history[channel], input_history[channel])
+                filtered[:, channel], _ = signal.lfilter(b, a, block[:, channel], zi=zi)
+
+            if len(block) >= 2:
+                input_history[:, 0] = block[-1]
+                input_history[:, 1] = block[-2]
+                output_history[:, 0] = filtered[-1]
+                output_history[:, 1] = filtered[-2]
             else:
-                sos = signal.butter(2, cutoff, btype="lowpass", fs=self.sample_rate, output="sos")
-            wet[start:end] = signal.sosfilt(sos, segment[start:end], axis=0)
-        return _mix(segment, wet, effect.mix)
+                input_history[:, 1] = input_history[:, 0]
+                input_history[:, 0] = block[-1]
+                output_history[:, 1] = output_history[:, 0]
+                output_history[:, 0] = filtered[-1]
+
+            output[start:end] = ((1.0 - mix) * block + mix * filtered) * output_gain
+        return output
+
+    def _apply_wobble_highpass(self, effect: Wobble, segment: np.ndarray, bpm: float) -> np.ndarray:
+        """Render ProcessWobbleInternal's high-pass filter branch."""
+        if len(segment) == 0:
+            return segment.copy()
+
+        block_size = 1024
+        channels = segment.shape[1]
+        output = np.empty_like(segment)
+        input_history = np.zeros((channels, 2), dtype=np.float64)
+        output_history = np.zeros((channels, 2), dtype=np.float64)
+        mix = _clamp(effect.mix / 100.0, 0.0, 1.0)
+        q = max(effect.bandwidth, 0.1)
+        output_gain = 1.0 - q * 0.04
+        period_samples = max(
+            1,
+            int(max((60.0 / max(bpm, 1.0)) / max(effect.frequency, 0.01), 0.1) * self.sample_rate),
+        )
+
+        for start in range(0, len(segment), block_size):
+            end = min(start + block_size, len(segment))
+            phase = (start % period_samples) / period_samples
+            cutoff = self._wobble_cutoff(effect, phase)
+            b, a = self._biquad_pass(cutoff, q=q, filter_type="highpass")
+            block = segment[start:end].astype(np.float64, copy=False)
+            filtered = np.empty_like(block)
+            for channel in range(channels):
+                zi = signal.lfiltic(b, a, output_history[channel], input_history[channel])
+                filtered[:, channel], _ = signal.lfilter(b, a, block[:, channel], zi=zi)
+
+            if len(block) >= 2:
+                input_history[:, 0] = block[-1]
+                input_history[:, 1] = block[-2]
+                output_history[:, 0] = filtered[-1]
+                output_history[:, 1] = filtered[-2]
+            else:
+                input_history[:, 1] = input_history[:, 0]
+                input_history[:, 0] = block[-1]
+                output_history[:, 1] = output_history[:, 0]
+                output_history[:, 0] = filtered[-1]
+
+            output[start:end] = ((1.0 - mix) * block + mix * filtered) * output_gain
+        return output
+
+    def _apply_wobble_bandpass(self, effect: Wobble, segment: np.ndarray, bpm: float) -> np.ndarray:
+        """Render ProcessWobbleInternal's band-pass filter branch."""
+        if len(segment) == 0:
+            return segment.copy()
+
+        block_size = 1024
+        channels = segment.shape[1]
+        output = np.empty_like(segment)
+        input_history = np.zeros((channels, 2), dtype=np.float64)
+        output_history = np.zeros((channels, 2), dtype=np.float64)
+        mix = _clamp(effect.mix / 100.0, 0.0, 1.0)
+        q = max(effect.bandwidth, 0.1)
+        if q <= 1.0:
+            band_gain = q + 0.9
+        else:
+            band_gain = q * 0.2 + 2.0
+            if band_gain > 4.0:
+                band_gain = 3.0
+        period_samples = max(
+            1,
+            int(max((60.0 / max(bpm, 1.0)) / max(effect.frequency, 0.01), 0.1) * self.sample_rate),
+        )
+
+        for start in range(0, len(segment), block_size):
+            end = min(start + block_size, len(segment))
+            phase = (start % period_samples) / period_samples
+            cutoff = self._wobble_cutoff(effect, phase)
+            b, a = self._biquad_pass(cutoff, q=q, filter_type="bandpass")
+            block = segment[start:end].astype(np.float64, copy=False)
+            filtered = np.empty_like(block)
+            for channel in range(channels):
+                zi = signal.lfiltic(b, a, output_history[channel], input_history[channel])
+                filtered[:, channel], _ = signal.lfilter(b, a, block[:, channel], zi=zi)
+
+            if len(block) >= 2:
+                input_history[:, 0] = block[-1]
+                input_history[:, 1] = block[-2]
+                output_history[:, 0] = filtered[-1]
+                output_history[:, 1] = filtered[-2]
+            else:
+                input_history[:, 1] = input_history[:, 0]
+                input_history[:, 0] = block[-1]
+                output_history[:, 1] = output_history[:, 0]
+                output_history[:, 0] = filtered[-1]
+
+            output[start:end] = (1.0 - mix) * block + mix * filtered * band_gain
+        return output
 
     def _apply_bitcrush(self, effect: Bitcrush, segment: np.ndarray) -> np.ndarray:
         hold = max(1, effect.amount)

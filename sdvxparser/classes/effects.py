@@ -75,12 +75,13 @@ class PassFilterType(_StringifiableEnum):
 
 
 class WaveShape(_StringifiableEnum):
-    """Enumeration for filter wave shape."""
+    """Raw VOX Wobble cutoff-modulation shapes."""
 
-    SAW = 0
-    SQUARE = 1
-    LINEAR = 2
-    SINE = 3
+    SAW_UP = 0
+    SAW_DOWN = 1
+    SINE = 2
+    TRIANGLE = 3
+    SQUARE = 4
 
 
 @dataclass
@@ -363,7 +364,7 @@ class Wobble(Effect):
 
     mix: float = 80.00
     filter_type: PassFilterType = PassFilterType.LOW_PASS
-    wave_shape: WaveShape = WaveShape.SINE
+    wave_shape: WaveShape = WaveShape.TRIANGLE
     low_cutoff: float = 500.00
     hi_cutoff: float = 18000.00
     frequency: float = 4.00
@@ -728,7 +729,7 @@ def from_vox_params(effect_index: int, params: Sequence[float]) -> Effect:
         case FXType.WOBBLE:
             return Wobble(
                 filter_type=PassFilterType(int(get(0, PassFilterType.LOW_PASS.value))),
-                wave_shape=WaveShape(int(get(1, WaveShape.SINE.value))),
+                wave_shape=WaveShape(int(get(1, WaveShape.TRIANGLE.value))),
                 mix=get(2, 80.0),
                 low_cutoff=get(3, 500.0),
                 hi_cutoff=get(4, 18000.0),

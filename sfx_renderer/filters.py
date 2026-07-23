@@ -32,6 +32,8 @@ class FilterDSP:
         alpha = sin_omega / (2.0 * max(q, 0.1))
         if filter_type == "highpass":
             b = np.array([(1 + cos_omega) / 2, -(1 + cos_omega), (1 + cos_omega) / 2], dtype=np.float64)
+        elif filter_type == "bandpass":
+            b = np.array([alpha, 0.0, -alpha], dtype=np.float64)
         else:
             b = np.array([(1 - cos_omega) / 2, 1 - cos_omega, (1 - cos_omega) / 2], dtype=np.float64)
         a = np.array([1 + alpha, -2 * cos_omega, 1 - alpha], dtype=np.float64)
