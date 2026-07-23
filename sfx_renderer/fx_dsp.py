@@ -122,10 +122,6 @@ class FXDSP(FilterDSP):
         stages = int(np.ceil(_clamp(effect.hicut_gain, 0.0, FLANGER_MAX_STAGE))) + 1
         return max(1, int(np.ceil(base_delay + depth)) * stages)
 
-    def _bar_subdivision_samples(self, wavelength: int, bpm: float) -> int:
-        wavelength = max(1, wavelength)
-        return max(1, self._beats_to_samples(4.0, bpm) // (wavelength * 2))
-
     def _apply_retrigger(self, effect: Retrigger | RetriggerEx, segment: np.ndarray, bpm: float) -> np.ndarray:
         if len(segment) == 0:
             return segment.copy()
