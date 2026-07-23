@@ -165,17 +165,21 @@ class FXDSP(FilterDSP):
         return _mix(segment, wet, mix)
 
     def _apply_gate(self, effect: Gate, segment: np.ndarray, bpm: float) -> np.ndarray:
-        period = self._bar_subdivision_samples(effect.wavelength, bpm)
-        duty = _clamp(effect.length / 2.0, 0.05, 1.0)
-        phase = (np.arange(len(segment)) % period) / period
-        envelope = (phase < duty).astype(np.float32)
-        fade = min(period // 12, max(1, int(0.004 * self.sample_rate)))
-        if fade > 1:
-            edge = np.linspace(0.0, 1.0, fade, dtype=np.float32)
-            for start in range(0, len(envelope), period):
-                end = min(start + fade, len(envelope))
-                envelope[start:end] *= edge[: end - start]
-        return _mix(segment, segment * envelope[:, None], effect.mix)
+        if len(segment) == 0:
+            return segment.copy()
+
+        mix = _clamp(effect.mix / 100.0, 0.0, 1.0)
+        wavelength = max(1, min(int(effect.wavelength), 32))
+        calculated_length = (60.0 / max(bpm, 1.0)) * effect.length
+        final_length = _clamp(calculated_length, 0.1, 4.0)
+        length_samples = max(1, int(final_length * self.sample_rate))
+        block_samples = max(1, length_samples // wavelength)
+
+        positions = np.arange(len(segment)) % length_samples
+        step_indices = positions // block_samples
+        gate_gain = (step_indices % 2 == 0).astype(np.float32)
+        envelope = (1.0 - mix) + mix * gate_gain
+        return segment * envelope[:, None]
 
     def _apply_flanger(
         self,
