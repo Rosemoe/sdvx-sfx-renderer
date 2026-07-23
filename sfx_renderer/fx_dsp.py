@@ -31,9 +31,10 @@ from .filters import FilterDSP
 _clamp = clamp
 _mix = mix
 
-PITCH_SHIFT_CHUNK_SIZE_44100 = 700
 PITCH_SHIFT_OVERLAP = 0.4
-PITCH_SHIFT_PREROLL_CHUNKS = 4
+PITCH_SHIFT_MIN_PERIOD_44100 = 132
+PITCH_SHIFT_MAX_PERIOD_44100 = 882
+PITCH_SHIFT_CORRELATION_WINDOW_44100 = 256
 FLANGER_MIN_DELAY_MS = 0.1
 FLANGER_MAX_DELAY_MS = 3.0
 FLANGER_MAX_STAGE = 4.0
@@ -71,24 +72,31 @@ class FXDSP(FilterDSP):
         return max(1, int(round((60.0 / max(bpm, 1.0)) * beats * self.sample_rate)))
 
     def _render_pitch_shift_event(self, output: np.ndarray, event: FXRenderEvent[PitchShift]) -> None:
-        chunk_size = self._pitch_shift_chunk_size()
-        preroll = PITCH_SHIFT_PREROLL_CHUNKS * chunk_size
-        context_start = max(0, event.start_sample - preroll)
-        context = output[context_start : event.end_sample].copy()
-        active_start = event.start_sample - context_start
-        processed = self._apply_pitch_shift(event.effect, context, active_start_sample=active_start)
-        output[event.start_sample : event.end_sample] = processed[active_start:]
+        segment = output[event.start_sample : event.end_sample].copy()
+        output[event.start_sample : event.end_sample] = self._apply_pitch_shift(event.effect, segment)
 
     def _apply_isolated_pitch_shift(self, effect: PitchShift, segment: np.ndarray) -> np.ndarray:
-        if len(segment) < 2:
-            return segment.copy()
-        preroll = min(PITCH_SHIFT_PREROLL_CHUNKS * self._pitch_shift_chunk_size(), len(segment) - 1)
-        context = np.concatenate((segment[1 : preroll + 1][::-1], segment), axis=0)
-        processed = self._apply_pitch_shift(effect, context, active_start_sample=preroll)
-        return processed[preroll:]
+        return self._apply_pitch_shift(effect, segment)
 
-    def _pitch_shift_chunk_size(self) -> int:
-        return max(2, int(round(PITCH_SHIFT_CHUNK_SIZE_44100 * self.sample_rate / 44100)))
+    def _pitch_shift_max_period_samples(self) -> int:
+        return max(2, int(round(PITCH_SHIFT_MAX_PERIOD_44100 * self.sample_rate / 44100)))
+
+    def _estimate_pitch_shift_period(self, samples: np.ndarray, active_start_sample: int) -> int:
+        """Find the game-style maximum autocorrelation lag for one pitch grain."""
+        minimum = max(2, int(round(PITCH_SHIFT_MIN_PERIOD_44100 * self.sample_rate / 44100)))
+        maximum = max(minimum, self._pitch_shift_max_period_samples())
+        window = max(1, int(round(PITCH_SHIFT_CORRELATION_WINDOW_44100 * self.sample_rate / 44100)))
+        start = max(0, active_start_sample - maximum)
+        mono = samples[start:, : min(samples.shape[1], 2)].mean(axis=1)
+        available = len(mono) - maximum - window
+        if available <= 0:
+            return min(maximum, max(minimum, len(mono) // 2))
+
+        reference = mono[:window]
+        scores = np.empty(maximum - minimum + 1, dtype=np.float64)
+        for index, lag in enumerate(range(minimum, maximum + 1)):
+            scores[index] = np.dot(reference, mono[lag : lag + window])
+        return minimum + int(np.argmax(scores))
 
     def _render_flanger_event(self, output: np.ndarray, event: FXRenderEvent[Flanger]) -> None:
         preroll = self._flanger_preroll_samples(event.effect)
@@ -466,22 +474,28 @@ class FXDSP(FilterDSP):
         *,
         active_start_sample: int = 0,
     ) -> np.ndarray:
-        if len(segment) == 0 or effect.amount == 0:
+        amount = _clamp(effect.amount, -12, 12)
+        if -1.0 < amount < 0.0:
+            amount = -1.0
+        elif 0.0 < amount < 1.0:
+            amount = 1.0
+        if len(segment) == 0 or amount == 0:
             return segment.copy()
 
-        chunk_size = self._pitch_shift_chunk_size()
-        overlap_samples = max(1, int(PITCH_SHIFT_OVERLAP * chunk_size))
-        hop_samples = chunk_size - overlap_samples
-        if hop_samples <= 0:
-            return segment.copy()
-
-        play_speed = 2 ** (effect.amount / 12.0)
+        play_speed = 2 ** (amount / 12.0)
         filtered = segment.astype(np.float64, copy=True)
         if play_speed > 1.0:
             cutoff = self.sample_rate / (2.0 * play_speed) * 0.95
             b, a = self._biquad_pass(cutoff, q=0.707, filter_type="lowpass")
             for _ in range(3):
                 filtered = signal.lfilter(b, a, filtered, axis=0)
+
+        active_start_sample = max(0, min(active_start_sample, len(segment)))
+        chunk_size = self._estimate_pitch_shift_period(filtered, active_start_sample)
+        overlap_samples = max(1, int(PITCH_SHIFT_OVERLAP * chunk_size))
+        hop_samples = chunk_size - overlap_samples
+        if hop_samples <= 0:
+            return segment.copy()
 
         ring_size = max(self.sample_rate * 4, chunk_size * 4)
         delay = np.zeros((ring_size, segment.shape[1]), dtype=np.float64)
@@ -493,7 +507,6 @@ class FXDSP(FilterDSP):
         prev_prev_start = prev_start
         third_chunk_blend_step: int | None = None
         wet_ratio = _clamp(effect.mix / 100.0, 0.0, 1.0)
-        active_start_sample = max(0, min(active_start_sample, len(segment)))
 
         for frame in range(len(segment)):
             delay[cursor] = filtered[frame]
