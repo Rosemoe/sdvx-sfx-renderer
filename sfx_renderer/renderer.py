@@ -20,6 +20,7 @@ from .audio import encode_audio as _encode_audio
 from .events import FXRenderEvent
 from .fx_dsp import FXDSP
 from .note_sfx import NoteHitSFX
+from .shot_sfx import ShotSFX
 from .vol_dsp import VolDSP
 
 DEFAULT_SAMPLE_RATE = 44100
@@ -27,9 +28,10 @@ DEFAULT_CHANNELS = 2
 RESOURCE_DIR = Path(__file__).with_name("resources")
 DEFAULT_KNOB_PATH = RESOURCE_DIR / "knob.wav"
 DEFAULT_CLICK_PATH = RESOURCE_DIR / "click.wav"
+DEFAULT_SHOT_DIR = RESOURCE_DIR / "shot"
 
 
-class FXEffects(FXDSP, VolDSP, NoteHitSFX):
+class FXEffects(FXDSP, VolDSP, NoteHitSFX, ShotSFX):
     """Apply SDVX FX button and VOL effects to full-song audio."""
 
     def __init__(self, sample_rate: int = DEFAULT_SAMPLE_RATE, channels: int = DEFAULT_CHANNELS) -> None:
@@ -47,6 +49,8 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX):
         knob_volume: float = 1.0,
         click_path: str | Path | None = None,
         click_volume: float = 1.0,
+        shot_dir: str | Path | None = DEFAULT_SHOT_DIR,
+        shot_volume: float = 1.0,
     ) -> list[FXRenderEvent[Effect]]:
         """Render a chart's FX button effects and write the processed full-song audio."""
         vox_path = Path(vox_path)
@@ -56,6 +60,7 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX):
             knob_path = DEFAULT_KNOB_PATH
         knob_path = Path(knob_path) if knob_path else None
         click_path = Path(click_path) if click_path else None
+        shot_dir = Path(shot_dir) if shot_dir else None
 
         with vox_path.open("r", encoding="utf-8-sig") as file:
             container = VOXParser().parse(file)
@@ -63,6 +68,7 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX):
         audio = _decode_audio(audio_path, self.sample_rate, self.channels)
         knob_audio = _decode_audio(knob_path, self.sample_rate, self.channels) if knob_path and knob_path.exists() else None
         click_audio = _decode_audio(click_path, self.sample_rate, self.channels) if click_path and click_path.exists() else None
+        shots = self._load_shots(shot_dir)
         rendered, events = self.render_chart(
             container.chart_info,
             audio,
@@ -71,6 +77,8 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX):
             knob_volume=knob_volume,
             click_audio=click_audio,
             click_volume=click_volume,
+            shots=shots,
+            shot_volume=shot_volume,
         )
         rendered = np.clip(rendered, -1.0, 1.0)
         _encode_audio(output_path, rendered, self.sample_rate, self.channels)
@@ -115,6 +123,8 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX):
         knob_volume: float = 1.0,
         click_audio: np.ndarray | None = None,
         click_volume: float = 1.0,
+        shots: dict[int, np.ndarray] | None = None,
+        shot_volume: float = 1.0,
     ) -> tuple[np.ndarray, list[FXRenderEvent[Effect]]]:
         """Render all active FX button holds into a copy of ``audio``."""
         events = self._collect_events(chart, len(audio), offset_ms)
@@ -142,7 +152,24 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX):
             self._render_knob_sounds(chart, output, knob_audio, offset_ms=offset_ms, volume=knob_volume)
         if click_audio is not None and len(click_audio) > 0 and click_volume > 0:
             self._render_note_hit_sounds(chart, output, click_audio, offset_ms=offset_ms, volume=click_volume)
+        if shots and shot_volume > 0:
+            self._render_fx_shots(chart, output, shots, offset_ms=offset_ms, volume=shot_volume)
         return output, events
+
+    def _load_shots(self, shot_dir: Path | None) -> dict[int, np.ndarray]:
+        """Decode numbered shot resources keyed by their 1-based FX slot."""
+        if shot_dir is None or not shot_dir.is_dir():
+            return {}
+
+        shots: dict[int, np.ndarray] = {}
+        for path in shot_dir.glob("*.wav"):
+            try:
+                slot = int(path.stem)
+            except ValueError:
+                continue
+            if slot > 0:
+                shots[slot] = _decode_audio(path, self.sample_rate, self.channels)
+        return shots
 
     def _collect_events(self, chart: ChartInfo, audio_samples: int, offset_ms: float) -> list[FXRenderEvent[Effect]]:
         fx_notes = sorted(chart.note_data.iter_fxs(), key=lambda item: item[1])
@@ -224,6 +251,9 @@ def main() -> None:
     parser.add_argument("--note-hit", action="store_true", help="Overlay click sounds at BT/FX note starts.")
     parser.add_argument("--click-sound", type=Path, default=DEFAULT_CLICK_PATH, help="BT/FX note-start click sound path.")
     parser.add_argument("--click-volume", type=float, default=1.0, help="BT/FX note-start click sound gain.")
+    parser.add_argument("--shot-dir", type=Path, default=DEFAULT_SHOT_DIR, help="Directory of numbered zero-duration FX shot sounds.")
+    parser.add_argument("--shot-volume", type=float, default=0.4, help="Zero-duration FX shot sound gain.")
+    parser.add_argument("--no-shot", action="store_true", help="Disable zero-duration FX shot sounds.")
     args = parser.parse_args()
 
     renderer = FXEffects(sample_rate=args.sample_rate)
@@ -236,6 +266,8 @@ def main() -> None:
         knob_volume=args.knob_volume,
         click_path=args.click_sound if args.note_hit else None,
         click_volume=args.click_volume,
+        shot_dir=None if args.no_shot else args.shot_dir,
+        shot_volume=args.shot_volume,
     )
     print(f"Rendered {len(events)} FX events to {args.output}")
 

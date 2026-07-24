@@ -7,5 +7,7 @@ sample/
 !sfx_renderer/resources/
 !sfx_renderer/resources/knob.wav
 !sfx_renderer/resources/click.wav
+!sfx_renderer/resources/shot/
+!sfx_renderer/resources/shot/*.wav
 *.flac
 *.mp3
