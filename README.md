@@ -28,6 +28,7 @@ Use `python -m sfx_renderer --help` to see options for audio offset, knob sounds
 
 ## Credits
 
+- [IDA Pro](https://hex-rays.com/ida-pro)
 - [silverhawke249/pyKSH-exporter](https://github.com/silverhawke249/pyKSH-exporter)
 - [kshootmania/ksm-v2](https://github.com/kshootmania/ksm-v2)
 - [kshootmania/ksmaudio](https://github.com/kshootmania/ksmaudio)
