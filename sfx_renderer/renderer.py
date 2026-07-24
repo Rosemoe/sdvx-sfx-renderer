@@ -182,7 +182,9 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX, ShotSFX):
         chart._bpm_durations.clear()
         chart._calculate_bpm_durations(endpoint)
 
-        fx_start_times = sorted({timepoint for _, timepoint, _ in fx_notes})
+        # A zero-duration FX note is a tap/shot trigger, not the beginning of
+        # a sustained effect.  It must not truncate an active FX hold.
+        fx_start_times = sorted({timepoint for _, timepoint, fx in fx_notes if fx.duration > 0})
         next_fx_start = {
             timepoint: fx_start_times[index + 1] if index + 1 < len(fx_start_times) else None
             for index, timepoint in enumerate(fx_start_times)
