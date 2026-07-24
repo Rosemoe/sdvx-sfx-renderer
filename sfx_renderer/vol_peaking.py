@@ -24,21 +24,25 @@ PEAK_FREQUENCIES_HZ = [
 ]
 
 def get_peak_parameters(raw_position: float) -> tuple[float, float, float]:
-    """Map a game laser coordinate to frequency and L/R peak-filter gains."""
+    """Map a game laser coordinate to DirectSound ParamEq parameters.
+
+    Returns ``(center_frequency_hz, bandwidth_semitones, gain_db)`` for one
+    stereo ``IDirectSoundFXParamEq`` instance.
+    """
     index = max(0, min(int(raw_position), len(PEAK_FREQUENCIES_HZ) - 1))
     frequency_hz = max(80.0, min(PEAK_FREQUENCIES_HZ[index], 16000.0))
 
     if frequency_hz < 200.0:
-        left_gain_db = frequency_hz * 0.075
-        right_gain_db = left_gain_db
+        bandwidth_semitones = frequency_hz * 0.075
+        gain_db = bandwidth_semitones
     elif frequency_hz < 1000.0:
-        left_gain_db = 15.0
-        right_gain_db = 15.0
+        bandwidth_semitones = 15.0
+        gain_db = 15.0
     else:
-        left_gain_db = 15.0 - (frequency_hz - 1000.0) * 0.0003
-        right_gain_db = 15.0 - (frequency_hz - 1000.0) * 0.0005
+        bandwidth_semitones = 15.0 - (frequency_hz - 1000.0) * 0.0003
+        gain_db = 15.0 - (frequency_hz - 1000.0) * 0.0005
 
     if index < 4:
-        right_gain_db = 0.0
+        gain_db = 0.0
 
-    return frequency_hz, left_gain_db, right_gain_db
+    return frequency_hz, bandwidth_semitones, gain_db

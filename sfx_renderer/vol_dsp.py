@@ -110,14 +110,14 @@ class VolDSP(FilterDSP):
         for start in range(0, len(segment), LASER_FILTER_BLOCK_SIZE):
             end = min(start + LASER_FILTER_BLOCK_SIZE, len(segment))
             v = float(values[(start + end - 1) // 2])
-            freq, left_gain_db, right_gain_db = get_peak_parameters(v * 127.0)
-            block = segment[start:end]
-            wet[start:end] = block
-            for channel, gain_db in enumerate((left_gain_db, right_gain_db)):
-                if channel >= block.shape[1]:
-                    break
-                b, a = self._biquad_peaking(freq, bandwidth=1.2, gain_db=gain_db)
-                wet[start:end, channel] = signal.lfilter(b, a, block[:, channel])
+            center_frequency_hz, bandwidth_semitones, gain_db = get_peak_parameters(v * 127.0)
+            bandwidth_octaves = bandwidth_semitones / 12.0
+            b, a = self._biquad_peaking(
+                center_frequency_hz,
+                bandwidth_octaves=bandwidth_octaves,
+                gain_db=gain_db,
+            )
+            wet[start:end] = signal.lfilter(b, a, segment[start:end], axis=0)
         return wet
 
     def _apply_laser_pass_filter(self, segment: np.ndarray, values: np.ndarray, filter_type: str) -> np.ndarray:

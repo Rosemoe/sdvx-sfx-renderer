@@ -13,13 +13,21 @@ class FilterDSP:
         value = clamp(value, 0.0, 1.0)
         return float(np.exp(np.log(start) + (np.log(end) - np.log(start)) * value))
 
-    def _biquad_peaking(self, freq: float, *, bandwidth: float, gain_db: float) -> tuple[np.ndarray, np.ndarray]:
+    def _biquad_peaking(
+        self,
+        freq: float,
+        *,
+        bandwidth_octaves: float,
+        gain_db: float,
+    ) -> tuple[np.ndarray, np.ndarray]:
         freq = clamp(freq, 20.0, self.sample_rate / 2.0 - 100.0)
         omega = 2 * np.pi * freq / self.sample_rate
         sin_omega = np.sin(omega)
         cos_omega = np.cos(omega)
         a_gain = 10 ** (gain_db / 40.0)
-        alpha = sin_omega * np.sinh(np.log(2.0) / 2.0 * bandwidth * omega / max(sin_omega, 1e-8))
+        alpha = sin_omega * np.sinh(
+            np.log(2.0) / 2.0 * bandwidth_octaves * omega / max(sin_omega, 1e-8)
+        )
         b = np.array([1 + alpha * a_gain, -2 * cos_omega, 1 - alpha * a_gain], dtype=np.float64)
         a = np.array([1 + alpha / a_gain, -2 * cos_omega, 1 - alpha / a_gain], dtype=np.float64)
         return b / a[0], a / a[0]
