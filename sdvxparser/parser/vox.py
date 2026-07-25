@@ -253,12 +253,9 @@ class VOXParser(Parser):
     def _parse_vol_position(self, value: str) -> Fraction:
         """Parse a laser position using the VOX version-dependent game behavior."""
 
-        if self._vox_version >= 10:
-            try:
-                return Fraction(int(value), 127)
-            except ValueError:
-                return Fraction(value)
-        return Fraction(value) / 127
+        if self._vox_version >= 12:
+            return Fraction(value)
+        return Fraction(int(value), 127)
 
     def _parse_line(self, line: str) -> None:
         # Ignore invalid lines
