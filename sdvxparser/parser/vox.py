@@ -29,6 +29,7 @@ from ..classes.effects import (
     from_vox_params,
 )
 from ..classes.filters import (
+    AutoTabSetting,
     BitcrushFilter,
     HighpassFilter,
     LowpassFilter,
@@ -91,13 +92,17 @@ SECTION_REGEX: dict[VOXSection, re.Pattern] = {
     VOXSection.TIME_SIGNATURE  : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+(?P<upper>\d+)\s+(?P<lower>\d+)"),
     VOXSection.BPM             : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+(?P<bpm>\d+\.\d+)\s+(?P<unknown>\d+-?)"),
     VOXSection.TILT            : re.compile(r"(?P<timepoint>\d+,\d+,\d+)(\s+(?P<tilt_type>\d))?"),
-    VOXSection.LYRICS          : re.compile(r"(?!)"),
+    VOXSection.LYRICS          : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+(?P<duration>\d+)\s+(?P<text>.+)"),
     VOXSection.END_POSITION    : re.compile(r"(?P<timepoint>\d+,\d+,\d+)"),
     VOXSection.FILTER_PARAMS   : re.compile(r"(?P<filter_index>\d+)(?P<content>(,\s+\d+(\.\d+)?))+"),
     VOXSection.EFFECT_PARAMS   : re.compile(r"(?P<effect_index>\d+)(?P<content>(,\s+\d+(\.\d+)?))+"),
     VOXSection.AUTOTAB_PARAMS  : re.compile(r"(?P<index>\d+),\s+(?P<param_index>\d+),\s+"
                                             r"(?P<param_start>\d+(\.\d+)?),\s+(?P<param_end>\d+(\.\d+)?)"),
-    VOXSection.REVERB          : re.compile(r"(?!)"),
+    VOXSection.REVERB          : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+"
+                                            r"(?P<param_1>-?\d+(?:\.\d+)?)\s+"
+                                            r"(?P<param_2>-?\d+(?:\.\d+)?)\s+"
+                                            r"(?P<param_3>-?\d+(?:\.\d+)?)\s+"
+                                            r"(?P<param_4>-?\d+(?:\.\d+)?)"),
     VOXSection.TRACK_VOL_L     : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+(?P<position>\d+(?:\.\d+)?)\s+"
                                             r"(?P<segment_type>\d)\s+(?P<spin_type>\d)\s+(?P<filter_type>\d)(?:\s+"
                                             r"(?P<wide_laser>\d)\s+0\s+(?P<ease_type>\d)\s+(?P<spin_length>\d+))?"),
@@ -167,6 +172,7 @@ class VOXParser(Parser):
     _effect_param_buffer: list[Effect]
     _parsed_effect_params: bool
     _parsed_tab_effect_params: bool
+    _parsed_autotab_params: bool
 
     def __init__(self) -> None:
         self.__song_chart_data = VOXSongChartContainer()
@@ -180,6 +186,7 @@ class VOXParser(Parser):
         self._effect_param_buffer = []
         self._parsed_effect_params = False
         self._parsed_tab_effect_params = False
+        self._parsed_autotab_params = False
 
     def parse(self, file: TextIO) -> VOXSongChartContainer:
         self._file_path = Path(file.name).resolve()
@@ -298,7 +305,18 @@ class VOXParser(Parser):
                 self.__song_chart_data.chart_info.effect_list.append(EffectEntry(effect1, effect2))
                 self._effect_param_buffer = []
         elif self._current_section == VOXSection.AUTOTAB_PARAMS:
-            pass
+            if not self._parsed_autotab_params:
+                self.__song_chart_data.chart_info.autotab_settings = []
+                self._parsed_autotab_params = True
+
+            self.__song_chart_data.chart_info.autotab_settings.append(
+                AutoTabSetting(
+                    effect_index=int(match["index"]),
+                    param_index=int(match["param_index"]),
+                    min_value=float(match["param_start"]),
+                    max_value=float(match["param_end"]),
+                )
+            )
         elif self._current_section == VOXSection.REVERB:
             pass
         elif self._current_section in [VOXSection.TRACK_VOL_L, VOXSection.TRACK_VOL_R]:

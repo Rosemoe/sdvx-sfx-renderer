@@ -13,6 +13,7 @@ __all__ = [
     "LowpassFilter",
     "HighpassFilter",
     "BitcrushFilter",
+    "AutoTabSetting",
     "get_default_filters",
 ]
 
@@ -104,6 +105,21 @@ class BitcrushFilter(Filter):
 
     def to_vox_string(self) -> str:
         return ",\t".join([f"{self.filter_index.value}", f"{self.mix:.2f}", f"{self.max_amount}"])
+
+
+@dataclass
+class AutoTabSetting(VoxEntity):
+    """One parameter assignment used by a VOX auto-tab effect."""
+
+    effect_index: int
+    param_index: int = 0
+    min_value: float = 0.00
+    max_value: float = 0.00
+
+    def to_vox_string(self) -> str:
+        return ",\t".join(
+            [f"{self.effect_index}", f"{self.param_index}", f"{self.min_value:.2f}", f"{self.max_value:.2f}"]
+        )
 
 
 def get_default_filters() -> list[Filter]:

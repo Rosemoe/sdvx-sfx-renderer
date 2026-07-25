@@ -28,6 +28,7 @@ from .enums import (
     TiltType,
 )
 from .filters import (
+    AutoTabSetting,
     Filter,
     get_default_filters,
 )
@@ -380,6 +381,7 @@ class ChartInfo:
     # Effect into
     effect_list: list[EffectEntry] = field(default_factory=list)
     filter_list: list[Filter] = field(default_factory=list)
+    autotab_settings: list[AutoTabSetting] = field(default_factory=list)
 
     active_filter: dict[TimePoint, FilterIndex] = field(default_factory=dict)
     autotab_infos: dict[TimePoint, AutoTabInfo] = field(default_factory=dict)
