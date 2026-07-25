@@ -97,6 +97,12 @@ SCRIPTED_TRACK_MAP: dict[str, NoteType] = {
     "SCRIPTED_TRACK7": NoteType.FX_R,
     "SCRIPTED_TRACK8": NoteType.VOL_R,
 }
+VOL_TRACK_REGEX = re.compile(
+    r"(?P<timepoint>\d+,\d+,\d+)\s+(?P<position>\d+(?:\.\d+)?)\s+"
+    r"(?P<segment_type>\d)\s+(?P<spin_type>\d)\s+(?P<filter_type>\d)(?:\s+"
+    r"(?P<wide_laser>\d)\s+0\s+(?P<ease_type>\d)\s+(?P<spin_length>\d+))?"
+)
+
 # fmt: off
 SECTION_REGEX: dict[VOXSection, re.Pattern] = {
     VOXSection.NONE            : re.compile(r"(?!)"),
@@ -115,26 +121,17 @@ SECTION_REGEX: dict[VOXSection, re.Pattern] = {
                                             r"(?P<param_2>-?\d+(?:\.\d+)?)\s+"
                                             r"(?P<param_3>-?\d+(?:\.\d+)?)\s+"
                                             r"(?P<param_4>-?\d+(?:\.\d+)?)"),
-    VOXSection.TRACK_VOL_L     : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+(?P<position>\d+(?:\.\d+)?)\s+"
-                                            r"(?P<segment_type>\d)\s+(?P<spin_type>\d)\s+(?P<filter_type>\d)(?:\s+"
-                                            r"(?P<wide_laser>\d)\s+0\s+(?P<ease_type>\d)\s+(?P<spin_length>\d+))?"),
+    VOXSection.TRACK_VOL_L     : VOL_TRACK_REGEX,
     VOXSection.TRACK_FX_L      : re.compile(r"(?P<timepoint>\d+,\d+,\d+)(\s+(?P<duration>\d+))?(\s+(?P<special>\d+))?"),
     VOXSection.TRACK_BT_A      : re.compile(r"(?P<timepoint>\d+,\d+,\d+)(\s+(?P<duration>\d+))?(\s+(?P<unknown>\d+))?"),
     VOXSection.TRACK_BT_B      : re.compile(r"(?P<timepoint>\d+,\d+,\d+)(\s+(?P<duration>\d+))?(\s+(?P<unknown>\d+))?"),
     VOXSection.TRACK_BT_C      : re.compile(r"(?P<timepoint>\d+,\d+,\d+)(\s+(?P<duration>\d+))?(\s+(?P<unknown>\d+))?"),
     VOXSection.TRACK_BT_D      : re.compile(r"(?P<timepoint>\d+,\d+,\d+)(\s+(?P<duration>\d+))?(\s+(?P<unknown>\d+))?"),
     VOXSection.TRACK_FX_R      : re.compile(r"(?P<timepoint>\d+,\d+,\d+)(\s+(?P<duration>\d+))?(\s+(?P<special>\d+))?"),
-    VOXSection.TRACK_VOL_R     : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+(?P<position>\d+(?:\.\d+)?)\s+"
-                                            r"(?P<segment_type>\d)\s+(?P<spin_type>\d)\s+(?P<filter_type>\d)(?:\s+"
-                                            r"(?P<wide_laser>\d)\s+0\s+(?P<ease_type>\d)\s+(?P<spin_length>\d+))?"),
+    VOXSection.TRACK_VOL_R     : VOL_TRACK_REGEX,
     VOXSection.AUTOTAB_INFO    : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+(?P<duration>\d+)\s+(?P<effect_index>\d+)"),
-    VOXSection.TRACK_VOL_L_ORIG: re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+(?P<position>\d+(?:\.\d+)?)\s+"
-                                            r"(?P<segment_type>\d)\s+(?P<spin_type>\d)\s+(?P<filter_type>\d)(?:\s+"
-                                            r"(?P<wide_laser>\d)\s+0\s+(?P<ease_type>\d)\s+(?P<spin_length>\d+))?"),
-    VOXSection.TRACK_VOL_R_ORIG: re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+((?P<position>\d+(?:\.\d+)?)\s+"
-                                            r"(?P<segment_type>\d)\s+(?P<spin_type>\d)\s+(?P<filter_type>\d)(?:\s+"
-                                            r"(?P<wide_laser>\d)\s+0\s+(?P<ease_type>\d)\s+(?P<spin_length>\d+))?)|"
-                                            r"((\s+(?P<duration>\d+))?(\s+(?P<special>\d+))?)"),
+    VOXSection.TRACK_VOL_L_ORIG: VOL_TRACK_REGEX,
+    VOXSection.TRACK_VOL_R_ORIG: VOL_TRACK_REGEX,
     VOXSection.SPCONTROLLER    : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+"
                                             r"(?P<sp_type>\S+)\s+(?P<sp_subtype>\S+)\s+"
                                             r"(?P<duration>\d+)\s+"
@@ -343,7 +340,12 @@ class VOXParser(Parser):
             )
         elif self._current_section == VOXSection.REVERB:
             pass
-        elif self._current_section in [VOXSection.TRACK_VOL_L, VOXSection.TRACK_VOL_R]:
+        elif self._current_section in [
+            VOXSection.TRACK_VOL_L,
+            VOXSection.TRACK_VOL_R,
+            VOXSection.TRACK_VOL_L_ORIG,
+            VOXSection.TRACK_VOL_R_ORIG,
+        ]:
             # Parse all parameters
             timepoint = self._convert_vox_timepoint(match["timepoint"])
             position = self._parse_vol_position(match["position"])
@@ -375,8 +377,12 @@ class VOXParser(Parser):
             vol_dict: dict[TimePoint, VolInfo]
             if self._current_section == VOXSection.TRACK_VOL_L:
                 vol_dict = self.__song_chart_data.chart_info.note_data.vol_l
-            else:
+            elif self._current_section == VOXSection.TRACK_VOL_R:
                 vol_dict = self.__song_chart_data.chart_info.note_data.vol_r
+            elif self._current_section == VOXSection.TRACK_VOL_L_ORIG:
+                vol_dict = self.__song_chart_data.chart_info.original_vol_data.vol_l
+            else:
+                vol_dict = self.__song_chart_data.chart_info.original_vol_data.vol_r
             # Become slam if timepoint already exists
             if timepoint in vol_dict:
                 vol_dict[timepoint].point_type |= segment_type
@@ -423,8 +429,6 @@ class VOXParser(Parser):
                 duration=duration,
                 effect_index=effect_index,
             )
-        elif self._current_section in [VOXSection.TRACK_VOL_L_ORIG, VOXSection.TRACK_VOL_R_ORIG]:
-            pass
         elif self._current_section == VOXSection.SPCONTROLLER:
             timepoint = self._convert_vox_timepoint(match["timepoint"])
             sp_type = match["sp_type"]

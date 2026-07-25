@@ -43,6 +43,7 @@ __all__ = [
     "BTInfo",
     "FXInfo",
     "VolInfo",
+    "OriginalVolData",
     "NoteData",
     "SPControllerInfo",
     "SPControllerSegment",
@@ -208,6 +209,14 @@ class VolInfo(Validateable):
             raise ValueError(f"end value out of range (got {self.end})")
         if self.spin_duration < 0:
             raise ValueError(f"spin_duration cannot be negative (got {self.spin_duration})")
+
+
+@dataclass
+class OriginalVolData:
+    """VOL points from the VOX ``TRACK ORIGINAL L/R`` sections."""
+
+    vol_l: dict[TimePoint, VolInfo] = field(default_factory=dict)
+    vol_r: dict[TimePoint, VolInfo] = field(default_factory=dict)
 
 
 @dataclass
@@ -421,6 +430,7 @@ class ChartInfo:
 
     # Actual chart data
     note_data: NoteData = field(default_factory=NoteData)
+    original_vol_data: OriginalVolData = field(default_factory=OriginalVolData)
 
     # SPController data
     spcontroller_data: SPControllerData = field(default_factory=SPControllerData)
