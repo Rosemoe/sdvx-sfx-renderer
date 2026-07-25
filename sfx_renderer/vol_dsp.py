@@ -16,8 +16,7 @@ from .vol_peaking import get_peak_parameters
 
 _clamp = clamp
 
-LASER_FILTER_BLOCK_SIZE = 256
-LASER_PASS_FILTER_BLOCK_SIZE = 64
+LASER_FILTER_UPDATE_HZ = 20.0
 LASER_V_EASING_PER_44100_FRAME = 0.01
 
 class VolDSP(FilterDSP):
@@ -107,8 +106,9 @@ class VolDSP(FilterDSP):
 
     def _apply_laser_peaking_filter(self, segment: np.ndarray, values: np.ndarray) -> np.ndarray:
         wet = np.empty_like(segment)
-        for start in range(0, len(segment), LASER_FILTER_BLOCK_SIZE):
-            end = min(start + LASER_FILTER_BLOCK_SIZE, len(segment))
+        block_size = max(1, round(self.sample_rate / LASER_FILTER_UPDATE_HZ))
+        for start in range(0, len(segment), block_size):
+            end = min(start + block_size, len(segment))
             v = float(values[(start + end - 1) // 2])
             center_frequency_hz, bandwidth_semitones, gain_db = get_peak_parameters(v * 127.0)
             bandwidth_octaves = bandwidth_semitones / 12.0
@@ -130,9 +130,10 @@ class VolDSP(FilterDSP):
         output_history = np.zeros((channels, 2), dtype=np.float64)
         smoothed_v = float(values[0])
         easing_per_frame = LASER_V_EASING_PER_44100_FRAME * 44100.0 / self.sample_rate
+        block_size = max(1, round(self.sample_rate / LASER_FILTER_UPDATE_HZ))
 
-        for start in range(0, len(segment), LASER_PASS_FILTER_BLOCK_SIZE):
-            end = min(start + LASER_PASS_FILTER_BLOCK_SIZE, len(segment))
+        for start in range(0, len(segment), block_size):
+            end = min(start + block_size, len(segment))
             target_v = float(values[end - 1])
             max_change = easing_per_frame * (end - start)
             smoothed_v += _clamp(target_v - smoothed_v, -max_change, max_change)
@@ -177,8 +178,9 @@ class VolDSP(FilterDSP):
 
     def _apply_laser_bitcrusher(self, segment: np.ndarray, values: np.ndarray) -> np.ndarray:
         wet = segment.copy()
-        for start in range(0, len(segment), LASER_FILTER_BLOCK_SIZE):
-            end = min(start + LASER_FILTER_BLOCK_SIZE, len(segment))
+        block_size = max(1, round(self.sample_rate / LASER_FILTER_UPDATE_HZ))
+        for start in range(0, len(segment), block_size):
+            end = min(start + block_size, len(segment))
             v = float(values[(start + end - 1) // 2])
             hold = max(1, int(round(v * 30.0)))
             for sample in range(start, end, hold):
