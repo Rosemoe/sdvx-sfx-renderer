@@ -1,3 +1,3 @@
 """
-Library for parsing KSH and VOX files.
+Library for parsing VOX files.
 """

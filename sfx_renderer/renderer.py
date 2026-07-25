@@ -176,7 +176,8 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX, ShotSFX):
         latest = TimePoint()
         for _, timepoint, fx in fx_notes:
             latest = max(latest, chart.add_duration(timepoint, fx.duration))
-        endpoint = max(TimePoint(chart.end_measure, 0, 1), latest)
+        chart_endpoint = chart.end_position or TimePoint(chart.end_measure, 0, 1)
+        endpoint = max(chart_endpoint, latest)
         chart._elapsed_time.clear()
         chart._elapsed_time_bpm.clear()
         chart._bpm_durations.clear()

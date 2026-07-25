@@ -16,6 +16,7 @@ from .base import (
     SongChartContainer,
 )
 from ..classes.chart import (
+    AutoTabInfo,
     BTInfo,
     FXInfo,
     SPControllerInfo,
@@ -26,6 +27,11 @@ from ..classes.effects import (
     Effect,
     EffectEntry,
     from_vox_params,
+)
+from ..classes.filters import (
+    BitcrushFilter,
+    HighpassFilter,
+    LowpassFilter,
 )
 from ..classes.enums import (
     EasingType,
@@ -104,7 +110,7 @@ SECTION_REGEX: dict[VOXSection, re.Pattern] = {
     VOXSection.TRACK_VOL_R     : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+(?P<position>\d+(?:\.\d+)?)\s+"
                                             r"(?P<segment_type>\d)\s+(?P<spin_type>\d)\s+(?P<filter_type>\d)(?:\s+"
                                             r"(?P<wide_laser>\d)\s+0\s+(?P<ease_type>\d)\s+(?P<spin_length>\d+))?"),
-    VOXSection.AUTOTAB_SETTING : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+(?P<duration>\d+)\s+(?P<which>\d+)"),
+    VOXSection.AUTOTAB_SETTING : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+(?P<duration>\d+)\s+(?P<effect_index>\d+)"),
     VOXSection.TRACK_VOL_L_ORIG: re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+(?P<position>\d+(?:\.\d+)?)\s+"
                                             r"(?P<segment_type>\d)\s+(?P<spin_type>\d)\s+(?P<filter_type>\d)(?:\s+"
                                             r"(?P<wide_laser>\d)\s+0\s+(?P<ease_type>\d)\s+(?P<spin_length>\d+))?"),
@@ -160,6 +166,7 @@ class VOXParser(Parser):
     _current_section: VOXSection
     _effect_param_buffer: list[Effect]
     _parsed_effect_params: bool
+    _parsed_tab_effect_params: bool
 
     def __init__(self) -> None:
         self.__song_chart_data = VOXSongChartContainer()
@@ -172,6 +179,7 @@ class VOXParser(Parser):
         self._current_section = VOXSection.NONE
         self._effect_param_buffer = []
         self._parsed_effect_params = False
+        self._parsed_tab_effect_params = False
 
     def parse(self, file: TextIO) -> VOXSongChartContainer:
         self._file_path = Path(file.name).resolve()
@@ -245,9 +253,37 @@ class VOXParser(Parser):
         elif self._current_section == VOXSection.LYRICS:
             pass
         elif self._current_section == VOXSection.END_POSITION:
-            pass
+            end_position = self._convert_vox_timepoint(match["timepoint"])
+            self.__song_chart_data.chart_info.end_position = end_position
+            self.__song_chart_data.chart_info.end_measure = end_position.measure
         elif self._current_section == VOXSection.FILTER_PARAMS:
-            pass
+            if not self._parsed_tab_effect_params:
+                self.__song_chart_data.chart_info.filter_effect_list = []
+                self._parsed_tab_effect_params = True
+
+            values = [v.strip() for v in line.split(",") if v.strip()]
+            effect_type = int(values[0])
+            params = [float(v) for v in values[1:]]
+            tab_effect = None
+            if effect_type == 1 and len(params) >= 4:
+                tab_effect = LowpassFilter(
+                    mix=params[0],
+                    min_cutoff=params[1],
+                    max_cutoff=params[2],
+                    bandwidth=params[3],
+                )
+            elif effect_type == 2 and len(params) >= 4:
+                tab_effect = HighpassFilter(
+                    mix=params[0],
+                    min_cutoff=params[1],
+                    max_cutoff=params[2],
+                    bandwidth=params[3],
+                )
+            elif effect_type == 3 and len(params) >= 2:
+                tab_effect = BitcrushFilter(mix=params[0], max_amount=int(params[1]))
+
+            if tab_effect is not None:
+                self.__song_chart_data.chart_info.filter_effect_list.append(tab_effect)
         elif self._current_section == VOXSection.EFFECT_PARAMS:
             if not self._parsed_effect_params:
                 self.__song_chart_data.chart_info.effect_list = []
@@ -336,7 +372,15 @@ class VOXParser(Parser):
                 bt_dict = self.__song_chart_data.chart_info.note_data.bt_d
             bt_dict[timepoint] = BTInfo(Fraction(duration, TICKS_PER_BAR))
         elif self._current_section == VOXSection.AUTOTAB_SETTING:
-            pass
+            timepoint = self._convert_vox_timepoint(match["timepoint"])
+            duration = Fraction(int(match["duration"]), TICKS_PER_BAR)
+            # This is the same raw effect index used by FXInfo.special for
+            # sustained FX buttons, including the VOX format's offset.
+            effect_index = int(match["effect_index"])
+            self.__song_chart_data.chart_info.autotab_infos[timepoint] = AutoTabInfo(
+                duration=duration,
+                effect_index=effect_index,
+            )
         elif self._current_section in [VOXSection.TRACK_VOL_L_ORIG, VOXSection.TRACK_VOL_R_ORIG]:
             pass
         elif self._current_section == VOXSection.SPCONTROLLER:
@@ -380,7 +424,9 @@ class VOXParser(Parser):
         final_note_timept = TimePoint()
         for _, timept, _ in self.__song_chart_data.chart_info.note_data.iter_notes():
             final_note_timept = max(timept, final_note_timept)
-        self.__song_chart_data.chart_info.end_measure = final_note_timept.measure + 2
+        chart = self.__song_chart_data.chart_info
+        if chart.end_position is None:
+            chart.end_measure = final_note_timept.measure + 2
 
         # Fix when last vol segment isn't properly indicated
         for vol_data in [

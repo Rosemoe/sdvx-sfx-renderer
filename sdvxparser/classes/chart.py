@@ -334,10 +334,10 @@ class SPControllerData:
 
 @dataclass
 class AutoTabInfo:
-    """A class for storing laser effect data."""
+    """A timed assignment of one tab effect to a laser segment."""
 
-    which: int
     duration: Fraction
+    effect_index: int
 
 
 @dataclass
@@ -360,6 +360,7 @@ class ChartInfo:
     preview_start: int = 0
     jacket_path: str = ""
     end_measure: int = 0
+    end_position: TimePoint | None = None
 
     # Calculated data
     _chip_notecount: int = -1
@@ -381,6 +382,7 @@ class ChartInfo:
     # Effect into
     effect_list: list[EffectEntry] = field(default_factory=list)
     filter_list: list[Filter] = field(default_factory=list)
+    filter_effect_list: list[Filter] = field(default_factory=list)
     autotab_list: list[AutoTabEntry] = field(default_factory=list)
 
     active_filter: dict[TimePoint, FilterIndex] = field(default_factory=dict)
