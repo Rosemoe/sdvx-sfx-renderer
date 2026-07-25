@@ -150,9 +150,6 @@ SEGMENT_TYPE_MAP = [
     SegmentFlag.START,
     SegmentFlag.END,
 ]
-LASER_SCALE_DEFAULT = Fraction(1)
-LASER_SCALE_OLD = Fraction(1, 127)
-NORMALIZED_LASER_POSITION_VERSION = 12
 SCRIPT_START_REGEX = re.compile(r"@SCRIPTSTART\s+(?P<script_id>\d+)")
 SCRIPT_END_REGEX = re.compile(r"@SCRIPTEND")
 
@@ -181,7 +178,6 @@ class VOXParser(Parser):
 
     # Intrinsic data
     _vox_version: int
-    _laser_scale: Fraction
 
     # Stateful data
     _current_section: VOXSection
@@ -199,7 +195,6 @@ class VOXParser(Parser):
         del self.__song_chart_data.chart_info.spcontroller_data.zoom_top[TimePoint()]
 
         self._vox_version = 0
-        self._laser_scale = LASER_SCALE_DEFAULT
 
         self._current_section = VOXSection.NONE
         self._effect_param_buffer = []
@@ -251,6 +246,16 @@ class VOXParser(Parser):
         t = TimePoint(m, position.numerator, position.denominator)
         return t
 
+    def _parse_vol_position(self, value: str) -> Fraction:
+        """Parse a laser position using the VOX version-dependent game behavior."""
+
+        if self._vox_version >= 10:
+            try:
+                return Fraction(int(value), 127)
+            except ValueError:
+                return Fraction(value)
+        return Fraction(value) / 127
+
     def _parse_line(self, line: str) -> None:
         # Ignore invalid lines
         match = SECTION_REGEX[self._current_section].match(line)
@@ -260,11 +265,6 @@ class VOXParser(Parser):
         if self._current_section == VOXSection.VERSION:
             self._vox_version = int(match["version"])
             self.__song_chart_data.format_version = self._vox_version
-            self._laser_scale = (
-                LASER_SCALE_OLD
-                if self._vox_version < NORMALIZED_LASER_POSITION_VERSION
-                else LASER_SCALE_DEFAULT
-            )
         elif self._current_section == VOXSection.TIME_SIGNATURE:
             timepoint = match["timepoint"]
             upper = int(match["upper"])
@@ -346,7 +346,7 @@ class VOXParser(Parser):
         elif self._current_section in [VOXSection.TRACK_VOL_L, VOXSection.TRACK_VOL_R]:
             # Parse all parameters
             timepoint = self._convert_vox_timepoint(match["timepoint"])
-            position = Fraction(match["position"]) * self._laser_scale
+            position = self._parse_vol_position(match["position"])
             segment_type_str = match["segment_type"]
             segment_type = (
                 SegmentFlag.START
