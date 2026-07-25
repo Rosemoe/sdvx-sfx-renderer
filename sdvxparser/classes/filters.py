@@ -13,7 +13,7 @@ __all__ = [
     "LowpassFilter",
     "HighpassFilter",
     "BitcrushFilter",
-    "AutoTabSetting",
+    "AutoTabParam",
     "get_default_filters",
 ]
 
@@ -108,7 +108,7 @@ class BitcrushFilter(Filter):
 
 
 @dataclass
-class AutoTabSetting(VoxEntity):
+class AutoTabParam(VoxEntity):
     """One parameter assignment used by a VOX auto-tab effect."""
 
     effect_index: int

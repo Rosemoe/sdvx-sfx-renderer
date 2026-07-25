@@ -29,7 +29,7 @@ from ..classes.effects import (
     from_vox_params,
 )
 from ..classes.filters import (
-    AutoTabSetting,
+    AutoTabParam,
     BitcrushFilter,
     HighpassFilter,
     LowpassFilter,
@@ -71,7 +71,7 @@ SECTION_MAP: dict[str, VOXSection] = {
     "TRACK6": VOXSection.TRACK_BT_D,
     "TRACK7": VOXSection.TRACK_FX_R,
     "TRACK8": VOXSection.TRACK_VOL_R,
-    "TRACK AUTO TAB": VOXSection.AUTOTAB_SETTING,
+    "TRACK AUTO TAB": VOXSection.AUTOTAB_INFO,
     "TRACK ORIGINAL L": VOXSection.TRACK_VOL_L_ORIG,
     "TRACK ORIGINAL R": VOXSection.TRACK_VOL_R_ORIG,
     "SPCONTROLER": VOXSection.SPCONTROLLER,
@@ -115,7 +115,7 @@ SECTION_REGEX: dict[VOXSection, re.Pattern] = {
     VOXSection.TRACK_VOL_R     : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+(?P<position>\d+(?:\.\d+)?)\s+"
                                             r"(?P<segment_type>\d)\s+(?P<spin_type>\d)\s+(?P<filter_type>\d)(?:\s+"
                                             r"(?P<wide_laser>\d)\s+0\s+(?P<ease_type>\d)\s+(?P<spin_length>\d+))?"),
-    VOXSection.AUTOTAB_SETTING : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+(?P<duration>\d+)\s+(?P<effect_index>\d+)"),
+    VOXSection.AUTOTAB_INFO    : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+(?P<duration>\d+)\s+(?P<effect_index>\d+)"),
     VOXSection.TRACK_VOL_L_ORIG: re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+(?P<position>\d+(?:\.\d+)?)\s+"
                                             r"(?P<segment_type>\d)\s+(?P<spin_type>\d)\s+(?P<filter_type>\d)(?:\s+"
                                             r"(?P<wide_laser>\d)\s+0\s+(?P<ease_type>\d)\s+(?P<spin_length>\d+))?"),
@@ -306,11 +306,11 @@ class VOXParser(Parser):
                 self._effect_param_buffer = []
         elif self._current_section == VOXSection.AUTOTAB_PARAMS:
             if not self._parsed_autotab_params:
-                self.__song_chart_data.chart_info.autotab_settings = []
+                self.__song_chart_data.chart_info.autotab_params = []
                 self._parsed_autotab_params = True
 
-            self.__song_chart_data.chart_info.autotab_settings.append(
-                AutoTabSetting(
+            self.__song_chart_data.chart_info.autotab_params.append(
+                AutoTabParam(
                     effect_index=int(match["index"]),
                     param_index=int(match["param_index"]),
                     min_value=float(match["param_start"]),
@@ -389,7 +389,7 @@ class VOXParser(Parser):
             else:
                 bt_dict = self.__song_chart_data.chart_info.note_data.bt_d
             bt_dict[timepoint] = BTInfo(Fraction(duration, TICKS_PER_BAR))
-        elif self._current_section == VOXSection.AUTOTAB_SETTING:
+        elif self._current_section == VOXSection.AUTOTAB_INFO:
             timepoint = self._convert_vox_timepoint(match["timepoint"])
             duration = Fraction(int(match["duration"]), TICKS_PER_BAR)
             # This is the same raw effect index used by FXInfo.special for

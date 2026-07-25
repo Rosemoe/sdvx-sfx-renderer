@@ -231,7 +231,7 @@ class VOXSection(Enum):
     TRACK_BT_D = auto()
     TRACK_FX_R = auto()
     TRACK_VOL_R = auto()
-    AUTOTAB_SETTING = auto()
+    AUTOTAB_INFO = auto()
     TRACK_VOL_L_ORIG = auto()
     TRACK_VOL_R_ORIG = auto()
     SPCONTROLLER = auto()
