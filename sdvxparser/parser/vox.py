@@ -37,6 +37,7 @@ from ..classes.filters import (
 from ..classes.enums import (
     EasingType,
     FilterIndex,
+    NoteType,
     SegmentFlag,
     SpinType,
     VOXSection,
@@ -85,6 +86,16 @@ SECTION_MAP: dict[str, VOXSection] = {
     "SCRIPTED_TRACK7": VOXSection.SCRIPTED_TRACK,
     "SCRIPTED_TRACK8": VOXSection.SCRIPTED_TRACK,
 }
+SCRIPTED_TRACK_MAP: dict[str, NoteType] = {
+    "SCRIPTED_TRACK1": NoteType.VOL_L,
+    "SCRIPTED_TRACK2": NoteType.FX_L,
+    "SCRIPTED_TRACK3": NoteType.BT_A,
+    "SCRIPTED_TRACK4": NoteType.BT_B,
+    "SCRIPTED_TRACK5": NoteType.BT_C,
+    "SCRIPTED_TRACK6": NoteType.BT_D,
+    "SCRIPTED_TRACK7": NoteType.FX_R,
+    "SCRIPTED_TRACK8": NoteType.VOL_R,
+}
 # fmt: off
 SECTION_REGEX: dict[VOXSection, re.Pattern] = {
     VOXSection.NONE            : re.compile(r"(?!)"),
@@ -126,7 +137,7 @@ SECTION_REGEX: dict[VOXSection, re.Pattern] = {
     VOXSection.SPCONTROLLER    : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+(?P<sp_type>\w+)"
                                             r"(?P<content>(\s+-?\d+(\.\d+)?)+)"),
     VOXSection.SCRIPT          : re.compile(r".*"),
-    VOXSection.SCRIPTED_TRACK  : re.compile(r".*"),
+    VOXSection.SCRIPTED_TRACK  : re.compile(r"(?P<timepoint>\d+,\d+,\d+)(?P<script_ids>(?:\s+\d+)*)"),
 }
 # fmt: on
 SEGMENT_TYPE_MAP = [
@@ -139,6 +150,8 @@ WHITESPACE_REGEX = re.compile(r"\s+")
 LASER_SCALE_DEFAULT = Fraction(1)
 LASER_SCALE_OLD = Fraction(1, 127)
 NORMALIZED_LASER_POSITION_VERSION = 12
+SCRIPT_START_REGEX = re.compile(r"@SCRIPTSTART\s+(?P<script_id>\d+)")
+SCRIPT_END_REGEX = re.compile(r"@SCRIPTEND")
 
 logger = logging.getLogger(__name__)
 
@@ -173,6 +186,9 @@ class VOXParser(Parser):
     _parsed_effect_params: bool
     _parsed_tab_effect_params: bool
     _parsed_autotab_params: bool
+    _scripted_track: NoteType | None
+    _current_script_id: int | None
+    _current_script_lines: list[str]
 
     def __init__(self) -> None:
         self.__song_chart_data = VOXSongChartContainer()
@@ -187,12 +203,15 @@ class VOXParser(Parser):
         self._parsed_effect_params = False
         self._parsed_tab_effect_params = False
         self._parsed_autotab_params = False
+        self._scripted_track = None
+        self._current_script_id = None
+        self._current_script_lines = []
 
     def parse(self, file: TextIO) -> VOXSongChartContainer:
         self._file_path = Path(file.name).resolve()
 
         for lineno, line in enumerate(file):
-            # Remove comments
+            # Remove comments.
             if "//" in line:
                 index = line.find("//")
                 line = line[:index]
@@ -200,7 +219,9 @@ class VOXParser(Parser):
             line = line.rstrip()
             # Section markers start with '#'
             if line.startswith("#"):
-                self._current_section = SECTION_MAP[line[1:]]
+                section_name = line[1:]
+                self._current_section = SECTION_MAP[section_name]
+                self._scripted_track = SCRIPTED_TRACK_MAP.get(section_name)
             # Content
             else:
                 # Ignore everything between sections
@@ -431,9 +452,27 @@ class VOXParser(Parser):
                 timepoint = self.__song_chart_data.chart_info.add_duration(timepoint, duration)
                 sp_dict[timepoint] = SPControllerInfo(end_val, end_val, SegmentFlag.END)
         elif self._current_section == VOXSection.SCRIPT:
-            pass
+            script_start = SCRIPT_START_REGEX.fullmatch(line)
+            if script_start is not None:
+                self._current_script_id = int(script_start["script_id"])
+                self._current_script_lines = []
+            elif SCRIPT_END_REGEX.fullmatch(line) is not None:
+                if self._current_script_id is None:
+                    raise ValueError
+                self.__song_chart_data.chart_info.script_definitions[self._current_script_id] = "\n".join(
+                    self._current_script_lines
+                )
+                self._current_script_id = None
+                self._current_script_lines = []
+            elif self._current_script_id is not None:
+                self._current_script_lines.append(line)
         elif self._current_section == VOXSection.SCRIPTED_TRACK:
-            pass
+            if self._scripted_track is None:
+                raise ValueError
+            timepoint = self._convert_vox_timepoint(match["timepoint"])
+            script_ids = [int(script_id) for script_id in match["script_ids"].split()]
+            track_scripts = self.__song_chart_data.chart_info.script_ids.setdefault(self._scripted_track, {})
+            track_scripts[timepoint] = script_ids
         else:
             pass
 

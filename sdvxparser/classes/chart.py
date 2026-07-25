@@ -393,6 +393,7 @@ class ChartInfo:
     spcontroller_data: SPControllerData = field(default_factory=SPControllerData)
 
     # Scripting assist
+    script_definitions: dict[int, str] = field(default_factory=dict)
     script_ids: dict[NoteType, dict[TimePoint, list[int]]] = field(default_factory=dict)
 
     # Private data
