@@ -28,9 +28,7 @@ from .enums import (
     TiltType,
 )
 from .filters import (
-    AutoTabEntry,
     Filter,
-    get_default_autotab,
     get_default_filters,
 )
 from .time import (
@@ -382,8 +380,6 @@ class ChartInfo:
     # Effect into
     effect_list: list[EffectEntry] = field(default_factory=list)
     filter_list: list[Filter] = field(default_factory=list)
-    filter_effect_list: list[Filter] = field(default_factory=list)
-    autotab_list: list[AutoTabEntry] = field(default_factory=list)
 
     active_filter: dict[TimePoint, FilterIndex] = field(default_factory=dict)
     autotab_infos: dict[TimePoint, AutoTabInfo] = field(default_factory=dict)
@@ -428,9 +424,6 @@ class ChartInfo:
 
         # Populate effect list
         self.effect_list = get_default_effects()
-
-        # Populate autotab list
-        self.autotab_list = get_default_autotab()
 
     # TODO: Look into why sometimes this predicts wrong long/tsumami counts
     def _calculate_notecounts(self) -> None:

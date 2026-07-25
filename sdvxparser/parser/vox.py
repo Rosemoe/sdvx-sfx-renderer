@@ -258,7 +258,7 @@ class VOXParser(Parser):
             self.__song_chart_data.chart_info.end_measure = end_position.measure
         elif self._current_section == VOXSection.FILTER_PARAMS:
             if not self._parsed_tab_effect_params:
-                self.__song_chart_data.chart_info.filter_effect_list = []
+                self.__song_chart_data.chart_info.filter_list = []
                 self._parsed_tab_effect_params = True
 
             values = [v.strip() for v in line.split(",") if v.strip()]
@@ -283,7 +283,7 @@ class VOXParser(Parser):
                 tab_effect = BitcrushFilter(mix=params[0], max_amount=int(params[1]))
 
             if tab_effect is not None:
-                self.__song_chart_data.chart_info.filter_effect_list.append(tab_effect)
+                self.__song_chart_data.chart_info.filter_list.append(tab_effect)
         elif self._current_section == VOXSection.EFFECT_PARAMS:
             if not self._parsed_effect_params:
                 self.__song_chart_data.chart_info.effect_list = []

@@ -13,10 +13,7 @@ __all__ = [
     "LowpassFilter",
     "HighpassFilter",
     "BitcrushFilter",
-    "AutoTabSetting",
-    "AutoTabEntry",
     "get_default_filters",
-    "get_default_autotab",
 ]
 
 
@@ -117,60 +114,4 @@ def get_default_filters() -> list[Filter]:
         HighpassFilter(),
         HighpassFilter(max_cutoff=2000.00, bandwidth=3.00),
         BitcrushFilter(),
-    ]
-
-
-@dataclass
-class AutoTabSetting(VoxEntity):
-    """
-    A class that represents a single auto-tab setting.
-
-    Auto-tab refers to applying instances of :class:`~sdvxparser.classes.effects.Effect` to laser segments.
-    """
-
-    effect_index: int  # This actually doesn't do anything, to my knowledge
-    param_index: int = 0
-    min_value: float = 0.00
-    max_value: float = 0.00
-
-    def to_vox_string(self) -> str:
-        return ",\t".join(
-            [f"{self.effect_index}", f"{self.param_index}", f"{self.min_value:.2f}", f"{self.max_value:.2f}"]
-        )
-
-
-@dataclass
-class AutoTabEntry(VoxEntity):
-    """
-    A class that represents a single auto-tab entry.
-
-    A single auto-tab entry consists of two auto-tab settings.
-    """
-
-    effect1: AutoTabSetting
-    effect2: AutoTabSetting
-
-    def __init__(self, effect_index: int) -> None:
-        self.effect1 = AutoTabSetting(effect_index)
-        self.effect2 = AutoTabSetting(effect_index)
-
-    def to_vox_string(self) -> str:
-        return f"{self.effect1.to_vox_string()}\n" f"{self.effect1.to_vox_string()}\n"
-
-
-def get_default_autotab() -> list[AutoTabEntry]:
-    """Get the default auto-tab settings."""
-    return [
-        AutoTabEntry(0),
-        AutoTabEntry(1),
-        AutoTabEntry(2),
-        AutoTabEntry(3),
-        AutoTabEntry(4),
-        AutoTabEntry(5),
-        AutoTabEntry(6),
-        AutoTabEntry(7),
-        AutoTabEntry(8),
-        AutoTabEntry(9),
-        AutoTabEntry(10),
-        AutoTabEntry(11),
     ]
