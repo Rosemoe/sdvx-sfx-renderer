@@ -184,11 +184,12 @@ class VOXParser(Parser):
     _parsed_effect_params: bool
     _parsed_tab_effect_params: bool
     _parsed_autotab_params: bool
+    _parse_original_vols: bool
     _scripted_track: NoteType | None
     _current_script_id: int | None
     _current_script_lines: list[str]
 
-    def __init__(self) -> None:
+    def __init__(self, *, parse_original_vols: bool = False) -> None:
         self.__song_chart_data = VOXSongChartContainer()
         del self.__song_chart_data.chart_info.spcontroller_data.zoom_bottom[TimePoint()]
         del self.__song_chart_data.chart_info.spcontroller_data.zoom_top[TimePoint()]
@@ -200,6 +201,7 @@ class VOXParser(Parser):
         self._parsed_effect_params = False
         self._parsed_tab_effect_params = False
         self._parsed_autotab_params = False
+        self._parse_original_vols = parse_original_vols
         self._scripted_track = None
         self._current_script_id = None
         self._current_script_lines = []
@@ -218,6 +220,9 @@ class VOXParser(Parser):
             if line.startswith("#"):
                 section_name = line[1:]
                 self._current_section = SECTION_MAP[section_name]
+                if self._current_section in (VOXSection.TRACK_VOL_L_ORIG, VOXSection.TRACK_VOL_R_ORIG):
+                    if not self._parse_original_vols:
+                        self._current_section = VOXSection.NONE
                 self._scripted_track = SCRIPTED_TRACK_MAP.get(section_name)
             # Content
             else:
