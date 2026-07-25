@@ -176,6 +176,8 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX, ShotSFX):
         latest = TimePoint()
         for _, timepoint, fx in fx_notes:
             latest = max(latest, chart.add_duration(timepoint, fx.duration))
+        for timepoint, autotab in chart.autotab_infos.items():
+            latest = max(latest, chart.add_duration(timepoint, autotab.duration))
         chart_endpoint = chart.end_position or TimePoint(chart.end_measure, 0, 1)
         endpoint = max(chart_endpoint, latest)
         chart._elapsed_time.clear()
@@ -239,6 +241,32 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX, ShotSFX):
                     ),
                 )
             )
+
+        for timepoint, autotab in sorted(chart.autotab_infos.items()):
+            if autotab.duration <= 0 or autotab.effect_index <= 0:
+                continue
+            effect_index = autotab.effect_index - 1
+            if effect_index >= len(chart.effect_list):
+                continue
+            effect = chart.effect_list[effect_index].effect1
+            end_timepoint = chart.add_duration(timepoint, autotab.duration)
+            start = chart._get_elapsed_time(timepoint) + offset_seconds
+            end = chart._get_elapsed_time(end_timepoint) + offset_seconds
+            start_sample = max(0, int(round(float(start) * self.sample_rate)))
+            end_sample = min(audio_samples, int(round(float(end) * self.sample_rate)))
+            if end_sample <= start_sample:
+                continue
+            events.append(
+                FXRenderEvent(
+                    start_sample=start_sample,
+                    end_sample=end_sample,
+                    bpm=float(chart.get_bpm(timepoint)),
+                    effect=effect,
+                    label=f"AUTO TAB {chart.timepoint_to_vox(timepoint)} slot={autotab.effect_index}",
+                )
+            )
+
+        events.sort(key=lambda event: event.start_sample)
         return self._merge_duplicate_fx_events(events)
 
 def main() -> None:
