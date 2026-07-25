@@ -19,6 +19,7 @@ from ..classes.chart import (
     AutoTabInfo,
     BTInfo,
     FXInfo,
+    LyricInfo,
     SPControllerInfo,
     SPControllerSegment,
     VolInfo,
@@ -41,6 +42,7 @@ from ..classes.enums import (
     NoteType,
     SegmentFlag,
     SpinType,
+    TiltType,
     VOXSection,
 )
 from ..classes.time import (
@@ -277,9 +279,13 @@ class VOXParser(Parser):
             # Ignoring stops because it's unnecessary (for now)
             self.__song_chart_data.chart_info.bpms[timepoint] = bpm
         elif self._current_section == VOXSection.TILT:
-            pass
+            timepoint = self._convert_vox_timepoint(match["timepoint"])
+            tilt_type = TiltType(int(match["tilt_type"] or TiltType.NORMAL.value))
+            self.__song_chart_data.chart_info.tilt_type[timepoint] = tilt_type
         elif self._current_section == VOXSection.LYRICS:
-            pass
+            timepoint = self._convert_vox_timepoint(match["timepoint"])
+            duration = Fraction(int(match["duration"]), TICKS_PER_BAR)
+            self.__song_chart_data.chart_info.lyrics[timepoint] = LyricInfo(duration, match["text"])
         elif self._current_section == VOXSection.END_POSITION:
             end_position = self._convert_vox_timepoint(match["timepoint"])
             self.__song_chart_data.chart_info.end_position = end_position

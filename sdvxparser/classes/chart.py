@@ -50,6 +50,7 @@ __all__ = [
     "SPControllerData",
     "parse_spcontroller_param",
     "AutoTabInfo",
+    "LyricInfo",
     "ChartInfo",
 ]
 
@@ -382,6 +383,14 @@ class AutoTabInfo:
 
 
 @dataclass
+class LyricInfo:
+    """Timed lyric text from the VOX ``LYRIC INFO`` section."""
+
+    duration: Fraction
+    text: str
+
+
+@dataclass
 class ChartInfo:
     """
     A class that contains all chart data and metadata.
@@ -419,6 +428,7 @@ class ChartInfo:
     timesigs: dict[TimePoint, TimeSignature] = field(default_factory=dict)
     stops: dict[TimePoint, bool] = field(default_factory=dict)
     tilt_type: dict[TimePoint, TiltType] = field(default_factory=dict)
+    lyrics: dict[TimePoint, LyricInfo] = field(default_factory=dict)
 
     # Effect into
     effect_list: list[EffectEntry] = field(default_factory=list)
