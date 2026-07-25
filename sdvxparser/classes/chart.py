@@ -3,6 +3,7 @@ Classes that represent chart-related entities.
 """
 import itertools
 import logging
+import math
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field, InitVar
@@ -44,7 +45,9 @@ __all__ = [
     "VolInfo",
     "NoteData",
     "SPControllerInfo",
+    "SPControllerSegment",
     "SPControllerData",
+    "parse_spcontroller_param",
     "AutoTabInfo",
     "ChartInfo",
 ]
@@ -102,6 +105,23 @@ HANDTRIP_NOTETYPES_MAP = {
 TRICKY_CAM_FLAT_INC = Decimal("0.103")
 TRICKY_JACK_DISTANCE = Decimal("15") / 130
 """Distance (in seconds) between two consecutive 1/16ths at 130bpm."""
+
+
+def parse_spcontroller_param(value: str) -> float | int | str:
+    """Parse one SPCONTROLER parameter, preserving unrecognized values as strings."""
+
+    try:
+        if value.startswith("d"):
+            return float(value[1:]) * math.pi / 180
+        if value.startswith("f"):
+            return float(value[1:])
+        if value.startswith("i"):
+            return int(value[1:])
+        if value.startswith("x"):
+            return int(value[1:], 16)
+        return float(value)
+    except ValueError:
+        return value
 
 logger = logging.getLogger(__name__)
 
@@ -303,7 +323,18 @@ class NoteData:
 
 @dataclass
 class SPControllerInfo:
-    """A class that represents a value of a SPController parameter."""
+    """A raw entry from the VOX ``SPCONTROLER`` section."""
+
+    timepoint: TimePoint
+    sp_type: str
+    sp_subtype: str
+    duration: int
+    params: tuple[str, str, str, str]
+
+
+@dataclass
+class SPControllerSegment:
+    """A derived numeric segment for legacy camera and lane calculations."""
 
     start: Decimal
     end: Decimal
@@ -313,19 +344,21 @@ class SPControllerInfo:
         """Return `True` if this point has a snap/instantaneous change."""
         return self.start != self.end
 
-    def duplicate(self) -> "SPControllerInfo":
+    def duplicate(self) -> "SPControllerSegment":
         """Create a copy of this object."""
-        return SPControllerInfo(self.start, self.end, self.point_type)
+        return SPControllerSegment(self.start, self.end, self.point_type)
 
 
 @dataclass
 class SPControllerData:
-    """A class that contains all configurable SPController parameters."""
+    """Raw SPCONTROLER entries and derived legacy parameter views."""
 
-    zoom_top: dict[TimePoint, SPControllerInfo] = field(default_factory=dict)
-    zoom_bottom: dict[TimePoint, SPControllerInfo] = field(default_factory=dict)
-    tilt: dict[TimePoint, SPControllerInfo] = field(default_factory=dict)
-    lane_split: dict[TimePoint, SPControllerInfo] = field(default_factory=dict)
+    entries: list[SPControllerInfo] = field(default_factory=list)
+
+    zoom_top: dict[TimePoint, SPControllerSegment] = field(default_factory=dict)
+    zoom_bottom: dict[TimePoint, SPControllerSegment] = field(default_factory=dict)
+    tilt: dict[TimePoint, SPControllerSegment] = field(default_factory=dict)
+    lane_split: dict[TimePoint, SPControllerSegment] = field(default_factory=dict)
 
     hidden_bars: dict[TimePoint, bool] = field(default_factory=dict)
     manual_bars: list[TimePoint] = field(default_factory=list)
@@ -419,8 +452,8 @@ class ChartInfo:
         self.tilt_type[TimePoint()] = TiltType.NORMAL
         self.active_filter[TimePoint()] = FilterIndex.PEAK
 
-        self.spcontroller_data.zoom_bottom[TimePoint()] = SPControllerInfo(Decimal(), Decimal())
-        self.spcontroller_data.zoom_top[TimePoint()] = SPControllerInfo(Decimal(), Decimal())
+        self.spcontroller_data.zoom_bottom[TimePoint()] = SPControllerSegment(Decimal(), Decimal())
+        self.spcontroller_data.zoom_top[TimePoint()] = SPControllerSegment(Decimal(), Decimal())
 
         # Populate filter list
         self.filter_list = get_default_filters()
@@ -838,8 +871,8 @@ class ChartInfo:
         camera_dicts = [self.spcontroller_data.zoom_bottom, self.spcontroller_data.zoom_top]
         for camera_dict in camera_dicts:
             is_empty_loop = True
-            cam_data_i = SPControllerInfo(Decimal(), Decimal())
-            cam_data_f = SPControllerInfo(Decimal(), Decimal())
+            cam_data_i = SPControllerSegment(Decimal(), Decimal())
+            cam_data_f = SPControllerSegment(Decimal(), Decimal())
             for timept_i, timept_f in itertools.pairwise(camera_dict):
                 is_empty_loop = False
                 cam_data_i = camera_dict[timept_i]

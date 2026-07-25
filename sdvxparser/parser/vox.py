@@ -20,6 +20,7 @@ from ..classes.chart import (
     BTInfo,
     FXInfo,
     SPControllerInfo,
+    SPControllerSegment,
     VolInfo,
     TICKS_PER_BAR,
 )
@@ -134,8 +135,11 @@ SECTION_REGEX: dict[VOXSection, re.Pattern] = {
                                             r"(?P<segment_type>\d)\s+(?P<spin_type>\d)\s+(?P<filter_type>\d)(?:\s+"
                                             r"(?P<wide_laser>\d)\s+0\s+(?P<ease_type>\d)\s+(?P<spin_length>\d+))?)|"
                                             r"((\s+(?P<duration>\d+))?(\s+(?P<special>\d+))?)"),
-    VOXSection.SPCONTROLLER    : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+(?P<sp_type>\w+)"
-                                            r"(?P<content>(\s+-?\d+(\.\d+)?)+)"),
+    VOXSection.SPCONTROLLER    : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+"
+                                            r"(?P<sp_type>\S+)\s+(?P<sp_subtype>\S+)\s+"
+                                            r"(?P<duration>\d+)\s+"
+                                            r"(?P<param_1>\S+)\s+(?P<param_2>\S+)\s+"
+                                            r"(?P<param_3>\S+)\s+(?P<param_4>\S+)"),
     VOXSection.SCRIPT          : re.compile(r".*"),
     VOXSection.SCRIPTED_TRACK  : re.compile(r"(?P<timepoint>\d+,\d+,\d+)(?P<script_ids>(?:\s+\d+)*)"),
 }
@@ -146,7 +150,6 @@ SEGMENT_TYPE_MAP = [
     SegmentFlag.START,
     SegmentFlag.END,
 ]
-WHITESPACE_REGEX = re.compile(r"\s+")
 LASER_SCALE_DEFAULT = Fraction(1)
 LASER_SCALE_OLD = Fraction(1, 127)
 NORMALIZED_LASER_POSITION_VERSION = 12
@@ -425,12 +428,16 @@ class VOXParser(Parser):
         elif self._current_section == VOXSection.SPCONTROLLER:
             timepoint = self._convert_vox_timepoint(match["timepoint"])
             sp_type = match["sp_type"]
-            content = WHITESPACE_REGEX.split(match["content"].strip())
-            _, duration_str, init_val_str, end_val_str, segment_type_str, *_ = content
-            duration = int(duration_str)
-            init_val = Decimal(init_val_str)
-            end_val = Decimal(end_val_str)
-            sp_dict: dict[TimePoint, SPControllerInfo]
+            info = SPControllerInfo(
+                timepoint=timepoint,
+                sp_type=sp_type,
+                sp_subtype=match["sp_subtype"],
+                duration=int(match["duration"]),
+                params=(match["param_1"], match["param_2"], match["param_3"], match["param_4"]),
+            )
+            self.__song_chart_data.chart_info.spcontroller_data.entries.append(info)
+
+            sp_dict: dict[TimePoint, SPControllerSegment]
             if sp_type == "CAM_RotX":
                 sp_dict = self.__song_chart_data.chart_info.spcontroller_data.zoom_top
             elif sp_type == "CAM_Radi":
@@ -441,16 +448,19 @@ class VOXParser(Parser):
                 sp_dict = self.__song_chart_data.chart_info.spcontroller_data.lane_split
             else:
                 return
+            duration = info.duration
+            init_val = Decimal(info.params[0])
+            end_val = Decimal(info.params[1])
             if duration == 0:
-                sp_dict[timepoint] = SPControllerInfo(init_val, end_val, SegmentFlag.END)
+                sp_dict[timepoint] = SPControllerSegment(init_val, end_val, SegmentFlag.END)
             else:
                 if timepoint in sp_dict:
                     sp_dict[timepoint].end = init_val
                     sp_dict[timepoint].point_type = SegmentFlag.MIDDLE
                 else:
-                    sp_dict[timepoint] = SPControllerInfo(init_val, init_val, SegmentFlag.MIDDLE)
+                    sp_dict[timepoint] = SPControllerSegment(init_val, init_val, SegmentFlag.MIDDLE)
                 timepoint = self.__song_chart_data.chart_info.add_duration(timepoint, duration)
-                sp_dict[timepoint] = SPControllerInfo(end_val, end_val, SegmentFlag.END)
+                sp_dict[timepoint] = SPControllerSegment(end_val, end_val, SegmentFlag.END)
         elif self._current_section == VOXSection.SCRIPT:
             script_start = SCRIPT_START_REGEX.fullmatch(line)
             if script_start is not None:
