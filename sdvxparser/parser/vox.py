@@ -1,22 +1,15 @@
-"""
-Parser class for VOX file format and its supporting classes and functions.
-"""
-import dataclasses
+"""Parser for SOUND VOLTEX VOX chart files."""
 import logging
 import re
 
 from decimal import Decimal
 from fractions import Fraction
-from pathlib import Path
 from typing import TextIO
 
-from .base import (
-    Parser,
-    SongChartContainer,
-)
 from ..classes.chart import (
     AutoTabInfo,
     BTInfo,
+    ChartInfo,
     FXInfo,
     LyricInfo,
     SPControllerInfo,
@@ -49,7 +42,6 @@ from ..classes.time import (
 )
 
 __all__ = [
-    "VOXSongChartContainer",
     "VOXParser",
 ]
 
@@ -153,25 +145,10 @@ SCRIPT_END_REGEX = re.compile(r"@SCRIPTEND")
 logger = logging.getLogger(__name__)
 
 
-@dataclasses.dataclass
-class VOXSongChartContainer(SongChartContainer):
-    """Implementation of :class:`~sdvxparser.parser.base.SongChartContainer` for the VOX format."""
-
-    format_version: int = 0
-
-    def write_vox(self, f: TextIO) -> None:
-        """Method stub. This is a no-op."""
-        pass
-
-    def write_xml(self, f: TextIO) -> None:
-        """Method stub. This is a no-op."""
-        pass
-
-
-class VOXParser(Parser):
+class VOXParser:
     """A parser for the VOX file format."""
 
-    __song_chart_data: VOXSongChartContainer
+    _chart: ChartInfo
 
     # Intrinsic data
     _vox_version: int
@@ -188,7 +165,11 @@ class VOXParser(Parser):
     _current_script_lines: list[str]
 
     def __init__(self, *, parse_original_vols: bool = False) -> None:
-        self.__song_chart_data = VOXSongChartContainer()
+        self._parse_original_vols = parse_original_vols
+        self._reset_parse_state()
+
+    def _reset_parse_state(self) -> None:
+        self._chart = ChartInfo()
         self._vox_version = 0
 
         self._current_section = VOXSection.NONE
@@ -196,13 +177,13 @@ class VOXParser(Parser):
         self._parsed_effect_params = False
         self._parsed_tab_effect_params = False
         self._parsed_autotab_params = False
-        self._parse_original_vols = parse_original_vols
         self._scripted_track = None
         self._current_script_id = None
         self._current_script_lines = []
 
-    def parse(self, file: TextIO) -> VOXSongChartContainer:
-        self._file_path = Path(file.name).resolve()
+    def parse(self, file: TextIO) -> ChartInfo:
+        """Parse one VOX stream into its chart data."""
+        self._reset_parse_state()
 
         for lineno, line in enumerate(file):
             # Remove comments.
@@ -235,12 +216,12 @@ class VOXParser(Parser):
 
         self._post_process()
 
-        return self.__song_chart_data
+        return self._chart
 
     def _convert_vox_timepoint(self, s: str) -> TimePoint:
         # This assumes there is no need to normalize the timepoint
         m, c, d = map(int, s.split(",", maxsplit=3))
-        timesig = self.__song_chart_data.chart_info.get_timesig(m)
+        timesig = self._chart.get_timesig(m)
         position = Fraction(c - 1, timesig.lower) + Fraction(d, TICKS_PER_BAR)
         t = TimePoint(m, position.numerator, position.denominator)
         return t
@@ -260,7 +241,7 @@ class VOXParser(Parser):
 
         if self._current_section == VOXSection.VERSION:
             self._vox_version = int(match["version"])
-            self.__song_chart_data.format_version = self._vox_version
+            self._chart.format_version = self._vox_version
         elif self._current_section == VOXSection.TIME_SIGNATURE:
             timepoint = match["timepoint"]
             upper = int(match["upper"])
@@ -269,27 +250,27 @@ class VOXParser(Parser):
             m, c, d = map(int, timepoint.split(",", maxsplit=3))
             if (c, d) != (1, 0):
                 m += 1
-            self.__song_chart_data.chart_info.timesigs[TimePoint(m, 0, 1)] = TimeSignature(upper, lower)
+            self._chart.timesigs[TimePoint(m, 0, 1)] = TimeSignature(upper, lower)
         elif self._current_section == VOXSection.BPM:
             timepoint = self._convert_vox_timepoint(match["timepoint"])
             bpm = Decimal(match["bpm"])
             # Ignoring stops because it's unnecessary (for now)
-            self.__song_chart_data.chart_info.bpms[timepoint] = bpm
+            self._chart.bpms[timepoint] = bpm
         elif self._current_section == VOXSection.TILT:
             timepoint = self._convert_vox_timepoint(match["timepoint"])
             tilt_type = TiltType(int(match["tilt_type"] or TiltType.NORMAL.value))
-            self.__song_chart_data.chart_info.tilt_type[timepoint] = tilt_type
+            self._chart.tilt_type[timepoint] = tilt_type
         elif self._current_section == VOXSection.LYRICS:
             timepoint = self._convert_vox_timepoint(match["timepoint"])
             duration = Fraction(int(match["duration"]), TICKS_PER_BAR)
-            self.__song_chart_data.chart_info.lyrics[timepoint] = LyricInfo(duration, match["text"])
+            self._chart.lyrics[timepoint] = LyricInfo(duration, match["text"])
         elif self._current_section == VOXSection.END_POSITION:
             end_position = self._convert_vox_timepoint(match["timepoint"])
-            self.__song_chart_data.chart_info.end_position = end_position
-            self.__song_chart_data.chart_info.end_measure = end_position.measure
+            self._chart.end_position = end_position
+            self._chart.end_measure = end_position.measure
         elif self._current_section == VOXSection.FILTER_PARAMS:
             if not self._parsed_tab_effect_params:
-                self.__song_chart_data.chart_info.filter_list = []
+                self._chart.filter_list = []
                 self._parsed_tab_effect_params = True
 
             values = [v.strip() for v in line.split(",") if v.strip()]
@@ -314,10 +295,10 @@ class VOXParser(Parser):
                 tab_effect = BitcrushFilter(mix=params[0], max_amount=int(params[1]))
 
             if tab_effect is not None:
-                self.__song_chart_data.chart_info.filter_list.append(tab_effect)
+                self._chart.filter_list.append(tab_effect)
         elif self._current_section == VOXSection.EFFECT_PARAMS:
             if not self._parsed_effect_params:
-                self.__song_chart_data.chart_info.effect_list = []
+                self._chart.effect_list = []
                 self._effect_param_buffer = []
                 self._parsed_effect_params = True
             values = [v.strip() for v in line.split(",") if v.strip()]
@@ -326,14 +307,14 @@ class VOXParser(Parser):
             self._effect_param_buffer.append(from_vox_params(effect_index, params))
             if len(self._effect_param_buffer) == 2:
                 effect1, effect2 = self._effect_param_buffer
-                self.__song_chart_data.chart_info.effect_list.append(EffectEntry(effect1, effect2))
+                self._chart.effect_list.append(EffectEntry(effect1, effect2))
                 self._effect_param_buffer = []
         elif self._current_section == VOXSection.AUTOTAB_PARAMS:
             if not self._parsed_autotab_params:
-                self.__song_chart_data.chart_info.autotab_params = []
+                self._chart.autotab_params = []
                 self._parsed_autotab_params = True
 
-            self.__song_chart_data.chart_info.autotab_params.append(
+            self._chart.autotab_params.append(
                 AutoTabParam(
                     effect_index=int(match["index"]),
                     param_index=int(match["param_index"]),
@@ -379,13 +360,13 @@ class VOXParser(Parser):
             # Insert into the right dictionary
             vol_dict: dict[TimePoint, VolInfo]
             if self._current_section == VOXSection.TRACK_VOL_L:
-                vol_dict = self.__song_chart_data.chart_info.note_data.vol_l
+                vol_dict = self._chart.note_data.vol_l
             elif self._current_section == VOXSection.TRACK_VOL_R:
-                vol_dict = self.__song_chart_data.chart_info.note_data.vol_r
+                vol_dict = self._chart.note_data.vol_r
             elif self._current_section == VOXSection.TRACK_VOL_L_ORIG:
-                vol_dict = self.__song_chart_data.chart_info.original_vol_data.vol_l
+                vol_dict = self._chart.original_vol_data.vol_l
             else:
-                vol_dict = self.__song_chart_data.chart_info.original_vol_data.vol_r
+                vol_dict = self._chart.original_vol_data.vol_r
             # Become slam if timepoint already exists
             if timepoint in vol_dict:
                 vol_dict[timepoint].point_type |= segment_type
@@ -400,9 +381,9 @@ class VOXParser(Parser):
             special = int(match["special"] or 0)
             fx_dict: dict[TimePoint, FXInfo]
             if self._current_section == VOXSection.TRACK_FX_L:
-                fx_dict = self.__song_chart_data.chart_info.note_data.fx_l
+                fx_dict = self._chart.note_data.fx_l
             else:
-                fx_dict = self.__song_chart_data.chart_info.note_data.fx_r
+                fx_dict = self._chart.note_data.fx_r
             fx_dict[timepoint] = FXInfo(Fraction(duration, TICKS_PER_BAR), special)
         elif self._current_section in [
             VOXSection.TRACK_BT_A,
@@ -414,13 +395,13 @@ class VOXParser(Parser):
             duration = int(match["duration"] or 0)
             bt_dict: dict[TimePoint, BTInfo]
             if self._current_section == VOXSection.TRACK_BT_A:
-                bt_dict = self.__song_chart_data.chart_info.note_data.bt_a
+                bt_dict = self._chart.note_data.bt_a
             elif self._current_section == VOXSection.TRACK_BT_B:
-                bt_dict = self.__song_chart_data.chart_info.note_data.bt_b
+                bt_dict = self._chart.note_data.bt_b
             elif self._current_section == VOXSection.TRACK_BT_C:
-                bt_dict = self.__song_chart_data.chart_info.note_data.bt_c
+                bt_dict = self._chart.note_data.bt_c
             else:
-                bt_dict = self.__song_chart_data.chart_info.note_data.bt_d
+                bt_dict = self._chart.note_data.bt_d
             bt_dict[timepoint] = BTInfo(Fraction(duration, TICKS_PER_BAR))
         elif self._current_section == VOXSection.AUTOTAB_INFO:
             timepoint = self._convert_vox_timepoint(match["timepoint"])
@@ -428,7 +409,7 @@ class VOXParser(Parser):
             # This is the same raw effect index used by FXInfo.special for
             # sustained FX buttons, including the VOX format's offset.
             effect_index = int(match["effect_index"])
-            self.__song_chart_data.chart_info.autotab_infos[timepoint] = AutoTabInfo(
+            self._chart.autotab_infos[timepoint] = AutoTabInfo(
                 duration=duration,
                 effect_index=effect_index,
             )
@@ -442,7 +423,7 @@ class VOXParser(Parser):
                 duration=int(match["duration"]),
                 params=(match["param_1"], match["param_2"], match["param_3"], match["param_4"]),
             )
-            self.__song_chart_data.chart_info.spcontroller_data.entries.append(info)
+            self._chart.spcontroller_data.entries.append(info)
         elif self._current_section == VOXSection.SCRIPT:
             script_start = SCRIPT_START_REGEX.fullmatch(line)
             if script_start is not None:
@@ -451,7 +432,7 @@ class VOXParser(Parser):
             elif SCRIPT_END_REGEX.fullmatch(line) is not None:
                 if self._current_script_id is None:
                     raise ValueError
-                self.__song_chart_data.chart_info.script_definitions[self._current_script_id] = "\n".join(
+                self._chart.script_definitions[self._current_script_id] = "\n".join(
                     self._current_script_lines
                 )
                 self._current_script_id = None
@@ -463,7 +444,7 @@ class VOXParser(Parser):
                 raise ValueError
             timepoint = self._convert_vox_timepoint(match["timepoint"])
             script_ids = [int(script_id) for script_id in match["script_ids"].split()]
-            track_scripts = self.__song_chart_data.chart_info.script_ids.setdefault(self._scripted_track, {})
+            track_scripts = self._chart.script_ids.setdefault(self._scripted_track, {})
             track_scripts[timepoint] = script_ids
         else:
             pass
@@ -471,16 +452,16 @@ class VOXParser(Parser):
     def _post_process(self) -> None:
         # Get final measure
         final_note_timept = TimePoint()
-        for _, timept, _ in self.__song_chart_data.chart_info.note_data.iter_notes():
+        for _, timept, _ in self._chart.note_data.iter_notes():
             final_note_timept = max(timept, final_note_timept)
-        chart = self.__song_chart_data.chart_info
+        chart = self._chart
         if chart.end_position is None:
             chart.end_measure = final_note_timept.measure + 2
 
         # Fix when last vol segment isn't properly indicated
         for vol_data in [
-            self.__song_chart_data.chart_info.note_data.vol_l,
-            self.__song_chart_data.chart_info.note_data.vol_r,
+            self._chart.note_data.vol_l,
+            self._chart.note_data.vol_r,
         ]:
             vol_keys = list(vol_data.keys())
             if not vol_keys:

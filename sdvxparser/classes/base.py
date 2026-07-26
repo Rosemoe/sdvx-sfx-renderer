@@ -1,24 +1,10 @@
-"""
-Base, generic classes supporting other more specialized classes.
-"""
+"""Small interfaces shared by VOX entities."""
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 
 __all__ = [
-    "AbstractDataclass",
     "VoxEntity",
-    "ParserWarning",
+    "Validateable",
 ]
-
-
-@dataclass
-class AbstractDataclass(ABC):
-    """An abstract base class for dataclasses."""
-
-    def __new__(cls, *args, **kwargs):
-        if cls == AbstractDataclass or cls.__bases__[0] == AbstractDataclass:
-            raise TypeError("Cannot instantiate abstract class.")
-        return super().__new__(cls)
 
 
 class VoxEntity(ABC):
@@ -27,7 +13,7 @@ class VoxEntity(ABC):
     @abstractmethod
     def to_vox_string(self) -> str:
         """Convert the object to its string representation in VOX file format."""
-        pass
+        raise NotImplementedError
 
 
 class Validateable(ABC):
@@ -40,10 +26,4 @@ class Validateable(ABC):
 
         :raises ValueError: if any of the input is invalid.
         """
-        pass
-
-
-class ParserWarning(Warning):
-    """Warning class for parser-related issues."""
-
-    pass
+        raise NotImplementedError

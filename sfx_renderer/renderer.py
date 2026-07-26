@@ -63,14 +63,14 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX, ShotSFX):
         shot_dir = Path(shot_dir) if shot_dir else None
 
         with vox_path.open("r", encoding="utf-8-sig") as file:
-            container = VOXParser().parse(file)
+            chart = VOXParser().parse(file)
 
         audio = _decode_audio(audio_path, self.sample_rate, self.channels)
         knob_audio = _decode_audio(knob_path, self.sample_rate, self.channels) if knob_path and knob_path.exists() else None
         click_audio = _decode_audio(click_path, self.sample_rate, self.channels) if click_path and click_path.exists() else None
         shots = self._load_shots(shot_dir)
         rendered, events = self.render_chart(
-            container.chart_info,
+            chart,
             audio,
             offset_ms=offset_ms,
             knob_audio=knob_audio,

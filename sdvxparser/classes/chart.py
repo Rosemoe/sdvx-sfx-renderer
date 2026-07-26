@@ -20,7 +20,6 @@ from .effects import (
     get_default_effects,
 )
 from .enums import (
-    DifficultySlot,
     EasingType,
     FilterIndex,
     NoteType,
@@ -316,23 +315,12 @@ class LyricInfo:
 
 @dataclass
 class ChartInfo:
-    """
-    A class that contains all chart data and metadata.
+    """Parsed data from one SOUND VOLTEX VOX chart."""
 
-    Instances of this class are not intended to be modified after created by the parser classes.
-    """
+    # VOX header
+    format_version: int = 0
 
-    # Metadata stuff
-    level: int = 1
-    difficulty: DifficultySlot = DifficultySlot.MAXIMUM
-    effector: str = "dummy"
-    illustrator: str = "dummy"
-
-    # To be used by converters
-    music_path: str = ""
-    music_offset: int = 0
-    preview_start: int = 0
-    jacket_path: str = ""
+    # Chart bounds
     end_measure: int = 0
     end_position: TimePoint | None = None
 
@@ -348,7 +336,7 @@ class ChartInfo:
     tilt_type: dict[TimePoint, TiltType] = field(default_factory=dict)
     lyrics: dict[TimePoint, LyricInfo] = field(default_factory=dict)
 
-    # Effect into
+    # Effect info
     effect_list: list[EffectEntry] = field(default_factory=list)
     filter_list: list[Filter] = field(default_factory=list)
     autotab_params: list[AutoTabParam] = field(default_factory=list)
