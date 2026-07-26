@@ -37,7 +37,6 @@ from .time import (
     TimePoint,
     TimeSignature,
 )
-from ..utils import clamp
 
 __all__ = [
     "BTInfo",
@@ -46,7 +45,6 @@ __all__ = [
     "OriginalVolData",
     "NoteData",
     "SPControllerInfo",
-    "SPControllerSegment",
     "SPControllerData",
     "parse_spcontroller_param",
     "AutoTabInfo",
@@ -59,55 +57,6 @@ TICKS_PER_BAR = 192
 
 HALF_TICK_BPM_THRESHOLD = Decimal("255")
 """Threshold for the BPM at which the tick rate halves."""
-
-MIN_RADAR_VAL = Decimal()
-MAX_RADAR_VAL = Decimal("200")
-NOTE_STR_FLAG_MAP = {
-    NoteType.FX_L: 0o40,
-    NoteType.BT_A: 0o20,
-    NoteType.BT_B: 0o10,
-    NoteType.BT_C: 0o04,
-    NoteType.BT_D: 0o02,
-    NoteType.FX_R: 0o01,
-}
-# fmt: off
-SPIN_TYPE_MAP: dict[SpinType, tuple[Decimal, int]] = {
-    SpinType.NO_SPIN      : (Decimal("0.0"),   0),
-    SpinType.SINGLE_SPIN  : (Decimal("1.1"), 152),
-    SpinType.SINGLE_SPIN_2: (Decimal("0.7"), 104),
-    SpinType.SINGLE_SPIN_3: (Decimal("0.9"), 128),
-    SpinType.TRIPLE_SPIN  : (Decimal("3.0"), 392),
-    SpinType.HALF_SPIN    : (Decimal("0.5"), 128),
-}
-# fmt: on
-ONEHAND_CHIPS_MAP = {
-    0: Decimal(),
-    1: Decimal("1.2132"),
-    2: Decimal("1.3343"),
-    3: Decimal("1.6246"),
-}
-ONEHAND_CHIPS_DEFAULT = Decimal("1.6365")
-ONEHAND_HOLDS_MAP = {
-    0: Decimal(),
-    1: Decimal("0.2205"),
-    2: Decimal("0.3530"),
-    3: Decimal("0.5180"),
-}
-ONEHAND_HOLDS_DEFAULT = Decimal("0.5649")
-HANDTRIP_VALUE_MAP = {
-    0: Decimal(),
-    1: Decimal("1.2486"),
-    2: Decimal("1.4250"),
-    3: Decimal("1.5113"),
-}
-HANDTRIP_NOTETYPES_MAP = {
-    NoteType.VOL_L: {NoteType.BT_A, NoteType.BT_B, NoteType.FX_L},
-    NoteType.VOL_R: {NoteType.BT_C, NoteType.BT_D, NoteType.FX_R},
-}
-TRICKY_CAM_FLAT_INC = Decimal("0.103")
-TRICKY_JACK_DISTANCE = Decimal("15") / 130
-"""Distance (in seconds) between two consecutive 1/16ths at 130bpm."""
-
 
 def parse_spcontroller_param(value: str) -> float | int | str:
     """Parse one SPCONTROLER parameter, preserving unrecognized values as strings."""
@@ -343,35 +292,10 @@ class SPControllerInfo:
 
 
 @dataclass
-class SPControllerSegment:
-    """A derived numeric segment for legacy camera and lane calculations."""
-
-    start: Decimal
-    end: Decimal
-    point_type: SegmentFlag = SegmentFlag.START
-
-    def is_snap(self) -> bool:
-        """Return `True` if this point has a snap/instantaneous change."""
-        return self.start != self.end
-
-    def duplicate(self) -> "SPControllerSegment":
-        """Create a copy of this object."""
-        return SPControllerSegment(self.start, self.end, self.point_type)
-
-
-@dataclass
 class SPControllerData:
-    """Raw SPCONTROLER entries and derived legacy parameter views."""
+    """Raw SPCONTROLER entries."""
 
     entries: list[SPControllerInfo] = field(default_factory=list)
-
-    zoom_top: dict[TimePoint, SPControllerSegment] = field(default_factory=dict)
-    zoom_bottom: dict[TimePoint, SPControllerSegment] = field(default_factory=dict)
-    tilt: dict[TimePoint, SPControllerSegment] = field(default_factory=dict)
-    lane_split: dict[TimePoint, SPControllerSegment] = field(default_factory=dict)
-
-    hidden_bars: dict[TimePoint, bool] = field(default_factory=dict)
-    manual_bars: list[TimePoint] = field(default_factory=list)
 
 
 @dataclass
@@ -416,12 +340,6 @@ class ChartInfo:
     _chip_notecount: int = -1
     _long_notecount: int = -1
     _vol_notecount: int = -1
-    _radar_notes: int = -1
-    _radar_peak: int = -1
-    _radar_tsumami: int = -1
-    _radar_onehand: int = -1
-    _radar_handtrip: int = -1
-    _radar_tricky: int = -1
 
     # Song data that may change mid-song
     bpms: dict[TimePoint, Decimal] = field(default_factory=dict)
@@ -454,7 +372,7 @@ class ChartInfo:
     _custom_effect: dict[str, Effect] = field(default_factory=dict, init=False, repr=False)
     _custom_filter: dict[str, Effect] = field(default_factory=dict, init=False, repr=False)
 
-    # For radar calculation
+    # Timing cache
     _elapsed_time: dict[TimePoint, Decimal] = field(default_factory=dict, init=False, repr=False)
     _elapsed_time_bpm: dict[TimePoint, Decimal] = field(default_factory=dict, init=False, repr=False)
     _bpm_durations: dict[Decimal, Decimal] = field(default_factory=dict, init=False, repr=False)
@@ -471,9 +389,6 @@ class ChartInfo:
         self.timesigs[TimePoint()] = TimeSignature()
         self.tilt_type[TimePoint()] = TiltType.NORMAL
         self.active_filter[TimePoint()] = FilterIndex.PEAK
-
-        self.spcontroller_data.zoom_bottom[TimePoint()] = SPControllerSegment(Decimal(), Decimal())
-        self.spcontroller_data.zoom_top[TimePoint()] = SPControllerSegment(Decimal(), Decimal())
 
         # Populate filter list
         self.filter_list = get_default_filters()
@@ -634,335 +549,6 @@ class ChartInfo:
             self._elapsed_time[timept] = prev_elapsed_time + note_distance
 
         return self._elapsed_time[timept]
-
-    # Radar calculation algorithm adapted from ZR147654's code, with some adjustments.
-    # As such, it will not return the same values, but it should be close enough.
-    def calculate_radar_values(self) -> None:
-        """
-        Calculate the chart's radar values.
-
-        This is called automatically when getting the radar values for the first time.
-        """
-        self._radar_notes = 0
-        self._radar_peak = 0
-        self._radar_tsumami = 0
-        self._radar_onehand = 0
-        self._radar_handtrip = 0
-        self._radar_tricky = 0
-
-        # Figure out start/endpoint
-        chart_begin_timept: TimePoint | None = None
-        chart_end_timept: TimePoint = TimePoint()
-        for _, timept, note in self.note_data.iter_notes():
-            if chart_begin_timept is None:
-                chart_begin_timept = timept
-            chart_begin_timept = min(timept, chart_begin_timept)
-            if isinstance(note, VolInfo):
-                end_timept = timept
-            else:
-                end_timept = self.add_duration(timept, note.duration)
-            chart_end_timept = max(end_timept, chart_end_timept)
-        if chart_begin_timept is None:
-            chart_begin_timept = TimePoint()
-
-        # Figure out the BPM the hi-speed setting is tuned to
-        self._calculate_bpm_durations(chart_end_timept)
-        standard_bpm = sorted(list(self._bpm_durations.items()), key=lambda t: (t[1], t[0]))[-1][0]
-        logger.info(f"----- GENERAL INFO -----")
-        logger.info(f"standard bpm: {standard_bpm:.2f}bpm")
-        for bpm, duration in self._bpm_durations.items():
-            logger.info(f"bpm duration: {bpm:.2f}bpm, {duration:.3f}s")
-
-        # Calculate chart length
-        chart_begin_time = self._get_elapsed_time(chart_begin_timept)
-        chart_end_time = self._get_elapsed_time(chart_end_timept)
-        total_chart_time = chart_end_time - chart_begin_time
-        # Used to scale certain radar values inversely to song length
-        time_coefficient = total_chart_time / Decimal("118.5")
-        time_coefficient = clamp(time_coefficient, Decimal("1"))
-        logger.info(
-            f"chart span: {self.timepoint_to_vox(chart_begin_timept)} ~ {self.timepoint_to_vox(chart_end_timept)}"
-        )
-        logger.info(f"chart span: {chart_begin_time:.3f}s ~ {chart_end_time:.3f}s ({total_chart_time:.3f}s)")
-
-        # Notes + Peak
-        # Higher average NPS = higher "notes" value
-        # Higher peak density (over 2 seconds) = higher "peak" value
-        peak_flags: dict[Decimal, int] = {}
-        button_count = 0
-        for note_type, timept, _ in self.note_data.iter_buttons():
-            button_count += 1
-            # Figure out the time this particular note happens
-            note_timing = self._get_elapsed_time(timept)
-            if note_timing not in peak_flags:
-                peak_flags[note_timing] = 0
-            peak_flags[note_timing] += NOTE_STR_FLAG_MAP[note_type]
-
-        peak_values: dict[Decimal, Decimal] = {}
-        for note_timing, flags in sorted(peak_flags.items()):
-            peak_value = Decimal()
-            # Decrease peak value when certain chords happen
-            # LAB chord
-            if flags & 0o70 == 0o70:
-                peak_value -= Decimal("1.5")
-            # 2-button chord of L, A, B
-            elif any(flags & mask == mask for mask in [0o60, 0o50, 0o30]):
-                peak_value -= Decimal("0.83")
-            # CDR chord
-            if flags & 0o07 == 0o07:
-                peak_value -= Decimal("1.5")
-            # 2-button chord of C, D, R
-            elif any(flags & mask == mask for mask in [0o06, 0o05, 0o03]):
-                peak_value -= Decimal("0.83")
-            # Only applies for exactly a BC chord
-            if flags == 0o14:
-                peak_value -= Decimal("0.83")
-            # Increase peak value by 1 for each note
-            while flags:
-                peak_value += flags % 2
-                flags //= 2
-            peak_values[note_timing] = peak_value
-
-        # Calculate "notes" value
-        # Number of chips + number of holds (not the chain from holds)
-        # All these values are gonna have some adjustment coefficient that's obtained experimentally (oof)
-        logger.info("----- NOTES INFO -----")
-        logger.info(f"keypress count: {button_count}")
-        notes_value = button_count * 200 / Decimal("12.521") / total_chart_time
-        self._radar_notes = int(clamp(notes_value, MIN_RADAR_VAL, MAX_RADAR_VAL))
-
-        # Calculate "peak" value
-        # Sum peak values over a range of 2 seconds
-        # Doing it twice -- once when note is at the start of the 2sec window, once at the end
-        ranged_peak_values = [
-            (tn, sum((v for tr, v in peak_values.items() if 0 <= (tr - tn) <= 2), Decimal()))
-            for tn in peak_values.keys()
-        ]
-        ranged_peak_values += [
-            (tn, sum((v for tr, v in peak_values.items() if 0 <= (tn - tr) <= 2), Decimal()))
-            for tn in peak_values.keys()
-        ]
-        peak_value = Decimal()
-        peak_time = Decimal()
-        for t, v in ranged_peak_values:
-            if v > peak_value:
-                peak_value = v
-                peak_time = t
-        logger.info(f"----- PEAK INFO -----")
-        logger.info(f"peak value at {peak_time:.3f}s: {peak_value:.2f}")
-        peak_value /= Decimal("0.24")
-        self._radar_peak = int(clamp(peak_value, MIN_RADAR_VAL, MAX_RADAR_VAL))
-
-        # Tsumami
-        # More lasers = higher radar value
-        moving_laser_time = Decimal()
-        static_laser_time = Decimal()
-        slam_laser_time = Decimal()
-        pre_laser_ranges: list[tuple[NoteType, TimePoint, TimePoint]] = []
-        for vol_tuple_i, vol_tuple_f in itertools.pairwise(self.note_data.iter_vols(add_dummy=True)):
-            note_type_i, timept_i, vol_data_i = vol_tuple_i
-            note_type_f, timept_f, vol_data_f = vol_tuple_f
-            # Add slam first before skipping
-            if vol_data_i.start != vol_data_i.end:
-                slam_laser_time += Decimal("0.11")
-                pre_laser_ranges.append((note_type_i, timept_i, timept_i))
-            # Skip if different tracks
-            if note_type_i != note_type_f:
-                continue
-            # Skip if these segments aren't connected
-            if SegmentFlag.END in vol_data_i.point_type:
-                continue
-            # Figure out laser duration otherwise
-            vol_duration = self._get_elapsed_time(timept_f) - self._get_elapsed_time(timept_i)
-            logger.debug(f"vol duration at {timept_i}: {vol_duration:.3f}s")
-            if vol_data_i.end != vol_data_f.start:
-                moving_laser_time += vol_duration
-                pre_laser_ranges.append((note_type_i, timept_i, timept_f))
-            else:
-                static_laser_time += vol_duration
-        # Merge coincident endpoints
-        laser_ranges: list[tuple[NoteType, TimePoint, TimePoint]] = []
-        prev_info: tuple[NoteType, TimePoint, TimePoint] | None = None
-        for note_type, timept_i, timept_f in pre_laser_ranges:
-            if prev_info is not None:
-                # If current segment is coincident, extend the previous segment
-                if note_type == prev_info[0] and timept_i == prev_info[2]:
-                    prev_info = prev_info[0], prev_info[1], timept_f
-                    continue
-                # Else, previous segment is disjoint from current one
-                else:
-                    laser_ranges.append(prev_info)
-            prev_info = note_type, timept_i, timept_f
-        if prev_info is not None:
-            laser_ranges.append(prev_info)
-        logger.info(f"----- TSUMAMI INFO -----")
-        logger.info(f"moving laser time: {moving_laser_time:.3f}s")
-        logger.info(f"static laser time: {static_laser_time:.3f}s")
-        logger.info(f"slam laser time: {slam_laser_time:.3f}s")
-        tsumami_value = (moving_laser_time + slam_laser_time) / total_chart_time * 191
-        tsumami_value += static_laser_time / total_chart_time * 29
-        tsumami_value *= Decimal("0.956")
-        self._radar_tsumami = int(clamp(tsumami_value, MIN_RADAR_VAL, MAX_RADAR_VAL))
-
-        # One-hand + Hand-trip
-        # More buttons while laser movement happens = higher "one-hand" value
-        # More opposite side buttons while one-handing = higher "hand-trip" value
-        onehand = {
-            "chip": Decimal(),
-            "long": Decimal(),
-        }
-        handtrip = {
-            "chip": Decimal(),
-            "long": Decimal(),
-        }
-        for laser_note_type, timept_i, timept_f in laser_ranges:
-            # One-hand check
-            chip_timepts: dict[TimePoint, list[NoteType]] = {}
-            hold_timepts: list[tuple[NoteType, TimePoint, TimePoint]] = []
-            for note_type, btn_timept_i, note_data in self.note_data.iter_buttons():
-                if timept_i <= btn_timept_i <= timept_f:
-                    if btn_timept_i not in chip_timepts:
-                        chip_timepts[btn_timept_i] = []
-                    chip_timepts[btn_timept_i].append(note_type)
-                if note_data.duration != 0:
-                    btn_timept_f = self.add_duration(btn_timept_i, note_data.duration)
-                    # Hold happens at least partially within the laser segment
-                    if btn_timept_i <= timept_f or timept_i <= btn_timept_f:
-                        hold_timepts.append((note_type, btn_timept_i, btn_timept_f))
-            timept_check = {t for _, t, _ in hold_timepts if timept_i <= t <= timept_f}
-            timept_check.add(timept_i)
-            for note_list in chip_timepts.values():
-                onehand_count = len(note_list)
-                handtrip_count = sum(1 for nt in note_list if nt in HANDTRIP_NOTETYPES_MAP[laser_note_type])
-                onehand["chip"] += ONEHAND_CHIPS_MAP.get(onehand_count, ONEHAND_CHIPS_DEFAULT)
-                handtrip["chip"] += HANDTRIP_VALUE_MAP[handtrip_count]
-            for timept in timept_check:
-                # Count holds that are happening
-                onehand_count = sum(1 for _, ti, tf in hold_timepts if ti <= timept < tf)
-                handtrip_count = sum(
-                    1
-                    for nt, ti, tf in hold_timepts
-                    if ti <= timept < tf and nt in HANDTRIP_NOTETYPES_MAP[laser_note_type]
-                )
-                onehand["long"] += ONEHAND_HOLDS_MAP.get(onehand_count, ONEHAND_HOLDS_DEFAULT)
-                handtrip["long"] += HANDTRIP_VALUE_MAP[handtrip_count]
-        logger.info(f"----- ONE-HAND INFO -----")
-        logger.info(f'button tap value: {onehand["chip"]:.3f}')
-        logger.info(f'button hold value: {onehand["long"]:.3f}')
-        onehand_factor = (onehand["chip"] + onehand["long"]) / button_count - Decimal("0.16")
-        onehand_factor /= Decimal("0.34")
-        onehand_factor = clamp(onehand_factor, Decimal(), Decimal("1")) + 2
-        onehand_value = (onehand["chip"] + onehand["long"]) / Decimal("5.55") * onehand_factor / time_coefficient
-        self._radar_onehand = int(clamp(onehand_value, MIN_RADAR_VAL, MAX_RADAR_VAL))
-        logger.info(f"----- HAND-TRIP INFO -----")
-        logger.info(f'button tap value: {handtrip["chip"]:.3f}')
-        logger.info(f'button hold value: {handtrip["long"]:.3f}')
-        handtrip_value = (handtrip["chip"] + handtrip["long"]) / time_coefficient
-        self._radar_handtrip = int(clamp(handtrip_value, MIN_RADAR_VAL, MAX_RADAR_VAL))
-
-        # Tricky
-        # BPM change, camera change, tilts, spins, jacks = higher radar value
-        tricky = {
-            "camera": Decimal("0.0"),
-            "notes": Decimal("0.0"),
-            "bpm_change": Decimal("0.0"),
-            "bpm_dev": Decimal("0.0"),
-            "jacks": Decimal("0.0"),
-        }
-        # Lane spins
-        for note_type, spin_start_t, vol in self.note_data.iter_vols():
-            # We're only taking spins (which implies slams)
-            if vol.start == vol.end or vol.spin_type == SpinType.NO_SPIN:
-                continue
-            # This is in ticks
-            tricky_increment, spin_duration = SPIN_TYPE_MAP[vol.spin_type]
-            camera_value = Decimal("0.82") if vol.spin_type == SpinType.HALF_SPIN else Decimal("2.2")
-            # Tricky increment from spin
-            tricky["camera"] += tricky_increment
-            if vol.spin_duration != 0:
-                spin_duration = vol.spin_duration * 48
-            spin_end_t = self.add_duration(spin_start_t, spin_duration)
-            # Tricky increment from camera
-            button_count = sum(
-                1 for _, note_t, _ in self.note_data.iter_buttons() if spin_start_t <= note_t < spin_end_t
-            )
-            tricky["notes"] += button_count * camera_value
-        # Camera changes
-        camera_dicts = [self.spcontroller_data.zoom_bottom, self.spcontroller_data.zoom_top]
-        for camera_dict in camera_dicts:
-            is_empty_loop = True
-            cam_data_i = SPControllerSegment(Decimal(), Decimal())
-            cam_data_f = SPControllerSegment(Decimal(), Decimal())
-            for timept_i, timept_f in itertools.pairwise(camera_dict):
-                is_empty_loop = False
-                cam_data_i = camera_dict[timept_i]
-                cam_data_f = camera_dict[timept_f]
-                # Add tricky value for instant changes
-                if cam_data_i.is_snap():
-                    tricky["camera"] += TRICKY_CAM_FLAT_INC
-                # Camera changes also add tricky value
-                tricky["camera"] += TRICKY_CAM_FLAT_INC
-                time_i = self._get_elapsed_time(timept_i)
-                time_f = self._get_elapsed_time(timept_f)
-                # Every note adds tricky depending on camera value
-                # TODO: Optimize this
-                note_timepts = [
-                    note_t for _, note_t, _ in self.note_data.iter_buttons() if timept_i <= note_t < timept_f
-                ]
-                for note_t in note_timepts:
-                    note_s = self._get_elapsed_time(note_t)
-                    cam_val = (cam_data_f.start - cam_data_i.end) * (note_s - time_i) / (time_f - time_i) + (
-                        cam_data_i.end
-                    )
-                    tricky["notes"] += abs(cam_val * 100) ** Decimal("2.5") / 2_100_000
-            if not is_empty_loop and cam_data_f.is_snap():
-                tricky["camera"] += TRICKY_CAM_FLAT_INC
-        # Lane tilts
-        tricky["camera"] += Decimal("0.002") * len(self.spcontroller_data.tilt)
-        # Jacks
-        last_note_type: NoteType | None = None
-        last_time: Decimal | None = None
-        jacks: list[int] = []
-        jack_count = 1
-        for note_type, timept, _ in self.note_data.iter_buttons():
-            if note_type != last_note_type:
-                last_note_type = note_type
-                last_time = None
-                # Check when we switch tracks
-                if jack_count >= 3:
-                    jacks.append(jack_count)
-                jack_count = 1
-            cur_time = self._get_elapsed_time(timept)
-            if last_time is not None:
-                if cur_time - last_time <= TRICKY_JACK_DISTANCE:
-                    jack_count += 1
-                else:
-                    if jack_count >= 3:
-                        jacks.append(jack_count)
-                    jack_count = 1
-            last_time = cur_time
-        # Check for the last track
-        if jack_count >= 3:
-            jacks.append(jack_count)
-        tricky["jacks"] += sum((v ** Decimal("1.85")) / Decimal("2.6") for v in jacks)
-        # BPM changes
-        tricky["bpm_change"] += Decimal("0.8") * (len(self.bpms) - 1)
-        tricky["bpm_change"] += ((len(self.bpms) - 1) ** Decimal("1.155")) / time_coefficient
-        for bpm_value, bpm_duration in self._bpm_durations.items():
-            bpm_ratio = standard_bpm / bpm_value
-            if bpm_ratio < 1:
-                bpm_ratio = 1 / bpm_ratio
-            elif bpm_ratio == 1:
-                continue
-            tricky["bpm_dev"] += 2 * (bpm_ratio ** Decimal("1.25")) * (bpm_duration ** Decimal("0.5"))
-        logger.info(f"----- TRICKY INFO -----")
-        logger.info(f'bpm change tricky: {tricky["bpm_change"]:.3f}')
-        logger.info(f'bpm deviation tricky: {tricky["bpm_dev"]:.3f}')
-        logger.info(f'baseline camera tricky: {tricky["camera"]:.3f}')
-        logger.info(f'note + lane change tricky: {tricky["notes"]:.3f}')
-        logger.info(f'jacks tricky: {tricky["jacks"]:.3f}')
-        tricky_value = sum(tricky.values()) / time_coefficient
-        self._radar_tricky = int(clamp(tricky_value, MIN_RADAR_VAL, MAX_RADAR_VAL))
 
     def get_timesig(self, measure: int) -> TimeSignature:
         """
@@ -1125,45 +711,3 @@ class ChartInfo:
     def max_ex_score(self) -> int:
         """The total ex score of the chart."""
         return 5 * self.chip_notecount + 2 * (self.long_notecount + self.vol_notecount)
-
-    @property
-    def radar_notes(self) -> int:
-        """The value of the NOTES radar."""
-        if self._radar_notes == -1:
-            self.calculate_radar_values()
-        return self._radar_notes
-
-    @property
-    def radar_peak(self) -> int:
-        """The value of the PEAK radar."""
-        if self._radar_peak == -1:
-            self.calculate_radar_values()
-        return self._radar_peak
-
-    @property
-    def radar_tsumami(self) -> int:
-        """The value of the TSUMAMI radar."""
-        if self._radar_tsumami == -1:
-            self.calculate_radar_values()
-        return self._radar_tsumami
-
-    @property
-    def radar_onehand(self) -> int:
-        """The value of the ONE-HAND radar."""
-        if self._radar_onehand == -1:
-            self.calculate_radar_values()
-        return self._radar_onehand
-
-    @property
-    def radar_handtrip(self) -> int:
-        """The value of the HAND-TRIP radar."""
-        if self._radar_handtrip == -1:
-            self.calculate_radar_values()
-        return self._radar_handtrip
-
-    @property
-    def radar_tricky(self) -> int:
-        """The value of the TRICKY radar."""
-        if self._radar_tricky == -1:
-            self.calculate_radar_values()
-        return self._radar_tricky

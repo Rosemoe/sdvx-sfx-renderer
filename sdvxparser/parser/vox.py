@@ -6,7 +6,6 @@ import logging
 import re
 
 from decimal import Decimal
-from itertools import pairwise
 from fractions import Fraction
 from pathlib import Path
 from typing import TextIO
@@ -21,7 +20,6 @@ from ..classes.chart import (
     FXInfo,
     LyricInfo,
     SPControllerInfo,
-    SPControllerSegment,
     VolInfo,
     TICKS_PER_BAR,
 )
@@ -191,9 +189,6 @@ class VOXParser(Parser):
 
     def __init__(self, *, parse_original_vols: bool = False) -> None:
         self.__song_chart_data = VOXSongChartContainer()
-        del self.__song_chart_data.chart_info.spcontroller_data.zoom_bottom[TimePoint()]
-        del self.__song_chart_data.chart_info.spcontroller_data.zoom_top[TimePoint()]
-
         self._vox_version = 0
 
         self._current_section = VOXSection.NONE
@@ -448,31 +443,6 @@ class VOXParser(Parser):
                 params=(match["param_1"], match["param_2"], match["param_3"], match["param_4"]),
             )
             self.__song_chart_data.chart_info.spcontroller_data.entries.append(info)
-
-            sp_dict: dict[TimePoint, SPControllerSegment]
-            if sp_type == "CAM_RotX":
-                sp_dict = self.__song_chart_data.chart_info.spcontroller_data.zoom_top
-            elif sp_type == "CAM_Radi":
-                sp_dict = self.__song_chart_data.chart_info.spcontroller_data.zoom_bottom
-            elif sp_type == "Tilt":
-                sp_dict = self.__song_chart_data.chart_info.spcontroller_data.tilt
-            elif sp_type == "Morphing3":
-                sp_dict = self.__song_chart_data.chart_info.spcontroller_data.lane_split
-            else:
-                return
-            duration = info.duration
-            init_val = Decimal(info.params[0])
-            end_val = Decimal(info.params[1])
-            if duration == 0:
-                sp_dict[timepoint] = SPControllerSegment(init_val, end_val, SegmentFlag.END)
-            else:
-                if timepoint in sp_dict:
-                    sp_dict[timepoint].end = init_val
-                    sp_dict[timepoint].point_type = SegmentFlag.MIDDLE
-                else:
-                    sp_dict[timepoint] = SPControllerSegment(init_val, init_val, SegmentFlag.MIDDLE)
-                timepoint = self.__song_chart_data.chart_info.add_duration(timepoint, duration)
-                sp_dict[timepoint] = SPControllerSegment(end_val, end_val, SegmentFlag.END)
         elif self._current_section == VOXSection.SCRIPT:
             script_start = SCRIPT_START_REGEX.fullmatch(line)
             if script_start is not None:
@@ -519,24 +489,3 @@ class VOXParser(Parser):
 
             last_timept = vol_keys[-1]
             vol_data[last_timept].point_type |= SegmentFlag.END
-
-        # Fix zoom_top and zoom_bottom segment flags
-        camera_dicts = [
-            self.__song_chart_data.chart_info.spcontroller_data.zoom_bottom,
-            self.__song_chart_data.chart_info.spcontroller_data.zoom_top,
-        ]
-        for camera_dict in camera_dicts:
-            if not camera_dict:
-                continue
-            timept_i = min(camera_dict.keys())
-            camera_dict[timept_i].point_type |= SegmentFlag.START
-
-        # Fix the remaining SPController data segment flags
-        if self.__song_chart_data.chart_info.spcontroller_data.tilt:
-            timept_i = min(self.__song_chart_data.chart_info.spcontroller_data.tilt.keys())
-            self.__song_chart_data.chart_info.spcontroller_data.tilt[timept_i].point_type |= SegmentFlag.START
-            for timept_i, timept_f in pairwise(self.__song_chart_data.chart_info.spcontroller_data.tilt):
-                data_i = self.__song_chart_data.chart_info.spcontroller_data.tilt[timept_i]
-                data_f = self.__song_chart_data.chart_info.spcontroller_data.tilt[timept_f]
-                if SegmentFlag.END in data_i.point_type:
-                    data_f.point_type |= SegmentFlag.START
