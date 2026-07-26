@@ -10,10 +10,10 @@ from typing import cast
 
 import numpy as np
 
+from sdvxparser import parse_vox
 from sdvxparser.classes.chart import ChartInfo
 from sdvxparser.classes.effects import Effect, Flanger, PitchShift, Retrigger, RetriggerEx
 from sdvxparser.classes.time import TimePoint
-from sdvxparser.parser.vox import VOXParser
 
 from .audio import decode_audio as _decode_audio
 from .audio import encode_audio as _encode_audio
@@ -62,8 +62,7 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX, ShotSFX):
         click_path = Path(click_path) if click_path else None
         shot_dir = Path(shot_dir) if shot_dir else None
 
-        with vox_path.open("r", encoding="utf-8-sig") as file:
-            chart = VOXParser().parse(file)
+        chart = parse_vox(vox_path)
 
         audio = _decode_audio(audio_path, self.sample_rate, self.channels)
         knob_audio = _decode_audio(knob_path, self.sample_rate, self.channels) if knob_path and knob_path.exists() else None
