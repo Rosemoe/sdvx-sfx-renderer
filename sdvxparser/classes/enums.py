@@ -66,6 +66,7 @@ class VOXSection(Enum):
 
     NONE = 0
     VERSION = auto()
+    BEAT_RESOLUTION = auto()
     TIME_SIGNATURE = auto()
     BPM = auto()
     TILT = auto()
@@ -75,6 +76,7 @@ class VOXSection(Enum):
     EFFECT_PARAMS = auto()
     AUTOTAB_PARAMS = auto()
     REVERB = auto()
+    POST_EFFECT = auto()
     TRACK_VOL_L = auto()
     TRACK_FX_L = auto()
     TRACK_BT_A = auto()
@@ -87,6 +89,7 @@ class VOXSection(Enum):
     TRACK_VOL_L_ORIG = auto()
     TRACK_VOL_R_ORIG = auto()
     SPCONTROLLER = auto()
+    LOCKED_SPCONTROLLER = auto()
     SCRIPT = auto()
     SCRIPTED_TRACK = auto()
 

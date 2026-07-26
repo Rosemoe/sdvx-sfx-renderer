@@ -48,6 +48,7 @@ __all__ = [
     "parse_spcontroller_param",
     "AutoTabInfo",
     "LyricInfo",
+    "PostEffectInfo",
     "ChartInfo",
 ]
 
@@ -314,11 +315,32 @@ class LyricInfo:
 
 
 @dataclass
+class PostEffectInfo:
+    """One raw entry from the VOX ``POSTEFFECT`` section.
+
+    ``start`` is a grid :class:`TimePoint` or an integer millisecond offset.
+    ``duration`` is a beat fraction converted from VOX ticks or an integer
+    millisecond duration.
+    """
+
+    start: TimePoint | int
+    unknown_1: int
+    duration: Fraction | int
+    effect_name: str
+    unknown_2: int
+    unknown_3: int
+    property_name: str
+    start_value: float
+    end_value: float
+
+
+@dataclass
 class ChartInfo:
     """Parsed data from one SOUND VOLTEX VOX chart."""
 
     # VOX header
     format_version: int = 0
+    beat_resolution: int | None = None
 
     # Chart bounds
     end_measure: int = 0
@@ -343,6 +365,7 @@ class ChartInfo:
 
     active_filter: dict[TimePoint, FilterIndex] = field(default_factory=dict)
     autotab_infos: dict[TimePoint, AutoTabInfo] = field(default_factory=dict)
+    post_effect_infos: list[PostEffectInfo] = field(default_factory=list)
 
     # Actual chart data
     note_data: NoteData = field(default_factory=NoteData)
@@ -350,6 +373,7 @@ class ChartInfo:
 
     # SPController data
     spcontroller_data: SPControllerData = field(default_factory=SPControllerData)
+    locked_spcontroller_data: SPControllerData = field(default_factory=SPControllerData)
 
     # Scripting assist
     script_definitions: dict[int, str] = field(default_factory=dict)

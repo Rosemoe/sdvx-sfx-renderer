@@ -12,6 +12,7 @@ from ..classes.chart import (
     ChartInfo,
     FXInfo,
     LyricInfo,
+    PostEffectInfo,
     SPControllerInfo,
     VolInfo,
     TICKS_PER_BAR,
@@ -48,6 +49,7 @@ __all__ = [
 SECTION_MAP: dict[str, VOXSection] = {
     "END": VOXSection.NONE,
     "FORMAT VERSION": VOXSection.VERSION,
+    "BEAT RESOLUTION": VOXSection.BEAT_RESOLUTION,
     "BEAT INFO": VOXSection.TIME_SIGNATURE,
     "BPM INFO": VOXSection.BPM,
     "TILT MODE INFO": VOXSection.TILT,
@@ -57,6 +59,7 @@ SECTION_MAP: dict[str, VOXSection] = {
     "FXBUTTON EFFECT INFO": VOXSection.EFFECT_PARAMS,
     "TAB PARAM ASSIGN INFO": VOXSection.AUTOTAB_PARAMS,
     "REVERB EFFECT PARAM": VOXSection.REVERB,
+    "POSTEFFECT": VOXSection.POST_EFFECT,
     "TRACK1": VOXSection.TRACK_VOL_L,
     "TRACK2": VOXSection.TRACK_FX_L,
     "TRACK3": VOXSection.TRACK_BT_A,
@@ -69,6 +72,7 @@ SECTION_MAP: dict[str, VOXSection] = {
     "TRACK ORIGINAL L": VOXSection.TRACK_VOL_L_ORIG,
     "TRACK ORIGINAL R": VOXSection.TRACK_VOL_R_ORIG,
     "SPCONTROLER": VOXSection.SPCONTROLLER,
+    "LOCKED_SPCONTROLER": VOXSection.LOCKED_SPCONTROLLER,
     "SCRIPT_DEFINE": VOXSection.SCRIPT,
     "SCRIPTED_TRACK1": VOXSection.SCRIPTED_TRACK,
     "SCRIPTED_TRACK2": VOXSection.SCRIPTED_TRACK,
@@ -94,11 +98,20 @@ VOL_TRACK_REGEX = re.compile(
     r"(?P<segment_type>\d)\s+(?P<spin_type>\d)\s+(?P<filter_type>\d)(?:\s+"
     r"(?P<wide_laser>\d)\s+0\s+(?P<ease_type>\d)\s+(?P<spin_length>\d+))?"
 )
+STOF_PREFIX_REGEX = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?")
+SPCONTROLLER_REGEX = re.compile(
+    r"(?P<timepoint>\d+,\d+,\d+)\s+"
+    r"(?P<sp_type>\S+)\s+(?P<sp_subtype>\S+)\s+"
+    r"(?P<duration>\d+)\s+"
+    r"(?P<param_1>\S+)\s+(?P<param_2>\S+)\s+"
+    r"(?P<param_3>\S+)\s+(?P<param_4>\S+)"
+)
 
 # fmt: off
 SECTION_REGEX: dict[VOXSection, re.Pattern] = {
     VOXSection.NONE            : re.compile(r"(?!)"),
     VOXSection.VERSION         : re.compile(r"(?P<version>\d+)"),
+    VOXSection.BEAT_RESOLUTION : re.compile(r"(?P<resolution>\d+)"),
     VOXSection.TIME_SIGNATURE  : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+(?P<upper>\d+)\s+(?P<lower>\d+)"),
     VOXSection.BPM             : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+(?P<bpm>\d+\.\d+)\s+(?P<unknown>\d+-?)"),
     VOXSection.TILT            : re.compile(r"(?P<timepoint>\d+,\d+,\d+)(\s+(?P<tilt_type>\d))?"),
@@ -113,6 +126,15 @@ SECTION_REGEX: dict[VOXSection, re.Pattern] = {
                                             r"(?P<param_2>-?\d+(?:\.\d+)?)\s+"
                                             r"(?P<param_3>-?\d+(?:\.\d+)?)\s+"
                                             r"(?P<param_4>-?\d+(?:\.\d+)?)"),
+    VOXSection.POST_EFFECT      : re.compile(r"(?P<start>\d+,\d+,\d+|\d+ms)\t"
+                                            r"(?P<unknown_1>-?\d+)\t"
+                                            r"(?P<duration>\d+|\d+ms)\t"
+                                            r"(?P<effect_name>[^\t]+)\t"
+                                            r"(?P<unknown_2>-?\d+)\t"
+                                            r"(?P<unknown_3>-?\d+)\t"
+                                            r"(?P<property_name>[^\t]+)\t"
+                                            r"(?P<value_1>[^\t]+)\t"
+                                            r"(?P<value_2>[^\t]+)"),
     VOXSection.TRACK_VOL_L     : VOL_TRACK_REGEX,
     VOXSection.TRACK_FX_L      : re.compile(r"(?P<timepoint>\d+,\d+,\d+)(\s+(?P<duration>\d+))?(\s+(?P<special>\d+))?"),
     VOXSection.TRACK_BT_A      : re.compile(r"(?P<timepoint>\d+,\d+,\d+)(\s+(?P<duration>\d+))?(\s+(?P<unknown>\d+))?"),
@@ -124,11 +146,8 @@ SECTION_REGEX: dict[VOXSection, re.Pattern] = {
     VOXSection.AUTOTAB_INFO    : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+(?P<duration>\d+)\s+(?P<effect_index>\d+)"),
     VOXSection.TRACK_VOL_L_ORIG: VOL_TRACK_REGEX,
     VOXSection.TRACK_VOL_R_ORIG: VOL_TRACK_REGEX,
-    VOXSection.SPCONTROLLER    : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+"
-                                            r"(?P<sp_type>\S+)\s+(?P<sp_subtype>\S+)\s+"
-                                            r"(?P<duration>\d+)\s+"
-                                            r"(?P<param_1>\S+)\s+(?P<param_2>\S+)\s+"
-                                            r"(?P<param_3>\S+)\s+(?P<param_4>\S+)"),
+    VOXSection.SPCONTROLLER    : SPCONTROLLER_REGEX,
+    VOXSection.LOCKED_SPCONTROLLER: SPCONTROLLER_REGEX,
     VOXSection.SCRIPT          : re.compile(r".*"),
     VOXSection.SCRIPTED_TRACK  : re.compile(r"(?P<timepoint>\d+,\d+,\d+)(?P<script_ids>(?:\s+\d+)*)"),
 }
@@ -233,6 +252,14 @@ class VOXParser:
             return Fraction(value)
         return Fraction(int(value), 127)
 
+    @staticmethod
+    def _parse_stof(value: str) -> float:
+        """Parse the numeric prefix accepted by the game's ``std::stof`` call."""
+        match = STOF_PREFIX_REGEX.match(value)
+        if match is None:
+            raise ValueError
+        return float(match.group())
+
     def _parse_line(self, line: str) -> None:
         # Ignore invalid lines
         match = SECTION_REGEX[self._current_section].match(line)
@@ -242,6 +269,8 @@ class VOXParser:
         if self._current_section == VOXSection.VERSION:
             self._vox_version = int(match["version"])
             self._chart.format_version = self._vox_version
+        elif self._current_section == VOXSection.BEAT_RESOLUTION:
+            self._chart.beat_resolution = int(match["resolution"])
         elif self._current_section == VOXSection.TIME_SIGNATURE:
             timepoint = match["timepoint"]
             upper = int(match["upper"])
@@ -324,6 +353,28 @@ class VOXParser:
             )
         elif self._current_section == VOXSection.REVERB:
             pass
+        elif self._current_section == VOXSection.POST_EFFECT:
+            start_value = match["start"]
+            start = int(start_value[:-2]) if start_value.endswith("ms") else self._convert_vox_timepoint(start_value)
+            duration_value = match["duration"]
+            duration = (
+                int(duration_value[:-2])
+                if duration_value.endswith("ms")
+                else Fraction(int(duration_value), TICKS_PER_BAR)
+            )
+            self._chart.post_effect_infos.append(
+                PostEffectInfo(
+                    start=start,
+                    unknown_1=int(match["unknown_1"]),
+                    duration=duration,
+                    effect_name=match["effect_name"],
+                    unknown_2=int(match["unknown_2"]),
+                    unknown_3=int(match["unknown_3"]),
+                    property_name=match["property_name"],
+                    start_value=self._parse_stof(match["value_1"]),
+                    end_value=self._parse_stof(match["value_2"]),
+                )
+            )
         elif self._current_section in [
             VOXSection.TRACK_VOL_L,
             VOXSection.TRACK_VOL_R,
@@ -413,7 +464,7 @@ class VOXParser:
                 duration=duration,
                 effect_index=effect_index,
             )
-        elif self._current_section == VOXSection.SPCONTROLLER:
+        elif self._current_section in (VOXSection.SPCONTROLLER, VOXSection.LOCKED_SPCONTROLLER):
             timepoint = self._convert_vox_timepoint(match["timepoint"])
             sp_type = match["sp_type"]
             info = SPControllerInfo(
@@ -423,7 +474,12 @@ class VOXParser:
                 duration=int(match["duration"]),
                 params=(match["param_1"], match["param_2"], match["param_3"], match["param_4"]),
             )
-            self._chart.spcontroller_data.entries.append(info)
+            target = (
+                self._chart.spcontroller_data
+                if self._current_section == VOXSection.SPCONTROLLER
+                else self._chart.locked_spcontroller_data
+            )
+            target.entries.append(info)
         elif self._current_section == VOXSection.SCRIPT:
             script_start = SCRIPT_START_REGEX.fullmatch(line)
             if script_start is not None:
