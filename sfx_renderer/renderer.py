@@ -202,8 +202,8 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX, ShotSFX):
         for note_type, timepoint, fx in fx_notes:
             if fx.duration <= 0 or fx.special <= 0:
                 continue
-            effect_index = fx.special - 1
-            if effect_index >= len(chart.effect_list):
+            effect_index = fx.special - 2
+            if not 0 <= effect_index < len(chart.effect_list):
                 continue
             effect = chart.effect_list[effect_index].effect1
             nominal_end_timepoint = chart.add_duration(timepoint, fx.duration)
@@ -245,8 +245,8 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX, ShotSFX):
         for timepoint, autotab in sorted(chart.autotab_infos.items()):
             if autotab.duration <= 0 or autotab.effect_index <= 0:
                 continue
-            effect_index = autotab.effect_index - 1
-            if effect_index >= len(chart.effect_list):
+            effect_index = autotab.effect_index - 2
+            if not 0 <= effect_index < len(chart.effect_list):
                 continue
             effect = chart.effect_list[effect_index].effect1
             end_timepoint = chart.add_duration(timepoint, autotab.duration)
