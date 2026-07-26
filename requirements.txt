@@ -1,2 +1,4 @@
 numpy>=2.2
 scipy>=1.15
+librosa>=0.11
+pyrubberband>=0.4

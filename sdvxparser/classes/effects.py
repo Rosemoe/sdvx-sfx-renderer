@@ -503,7 +503,7 @@ class PitchShift(Effect):
     """A class representing a pitch shift effect."""
 
     mix: float = 100.00
-    amount: int = 12
+    amount: float = 12.00
 
     @property
     def effect_index(self) -> FXType:
@@ -513,7 +513,7 @@ class PitchShift(Effect):
     def from_dict(s: Mapping[str, str]) -> "PitchShift":
         effect = PitchShift()
         if "pitch" in s:
-            effect.amount = int(float(s["pitch"]))
+            effect.amount = float(s["pitch"])
         if "mix" in s:
             effect.mix = parse_length(s["mix"]) * 100
         return effect
@@ -522,10 +522,10 @@ class PitchShift(Effect):
         if len(s) < 1:
             logger.warning(f"{self.__class__.__name__} requires 1 parameter (got {len(s)})")
             return
-        self.amount = s[0]
+        self.amount = float(s[0])
 
     def to_vox_string(self) -> str:
-        return ",\t".join([f"{self.effect_index.value}", f"{self.mix:.2f}", f"{self.amount}"])
+        return ",\t".join([f"{self.effect_index.value}", f"{self.mix:.2f}", f"{self.amount:.2f}"])
 
 
 @_register_effect
@@ -539,7 +539,7 @@ class PitchShiftEx(PitchShift):
     def from_dict(s: Mapping[str, str]) -> "PitchShiftEx":
         effect = PitchShiftEx()
         if "pitch" in s:
-            effect.amount = int(float(s["pitch"]))
+            effect.amount = float(s["pitch"])
         if "mix" in s:
             effect.mix = parse_length(s["mix"]) * 100
         return effect
@@ -748,11 +748,11 @@ def from_vox_params(effect_index: int, params: Sequence[float]) -> Effect:
                 decay=get(5, 0.15),
             )
         case FXType.PITCH_SHIFT:
-            return PitchShift(mix=get(0, 100.0), amount=int(get(1, 12)))
+            return PitchShift(mix=get(0, 100.0), amount=get(1, 12.0))
         case FXType.PITCH_SHIFT_EX:
             return PitchShiftEx(
                 mix=get(0, 100.0),
-                amount=int(get(1, 12)),
+                amount=get(1, 12.0),
                 ex_param=get(2, 1.0),
             )
         case FXType.TAPESCRATCH:

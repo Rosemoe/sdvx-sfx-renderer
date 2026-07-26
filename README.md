@@ -12,6 +12,11 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
+PitchShift uses `librosa` by default; it is included in `requirements.txt`. The optional
+`pyrubberband` backend also requires the Rubber Band command-line utility on `PATH` (or
+at `RUBBERBAND_EXECUTABLE`). Select it with
+`$env:SDVX_PITCH_SHIFT_BACKEND = "rubberband"` before rendering.
+
 Render a chart:
 
 ```powershell

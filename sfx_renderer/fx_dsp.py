@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
+import shutil
+import subprocess
 
 import numpy as np
 from scipy import signal
@@ -352,7 +355,7 @@ class FXDSP(FilterDSP):
         return high_cutoff if shape == 4 and phase >= 0.5 else low_cutoff
 
     def _apply_wobble_lowpass(self, effect: Wobble, segment: np.ndarray, bpm: float) -> np.ndarray:
-        """Render ProcessWobbleInternal's low-pass filter branch."""
+        """Render Wobble's low-pass filter branch."""
         if len(segment) == 0:
             return segment.copy()
 
@@ -395,7 +398,7 @@ class FXDSP(FilterDSP):
         return output
 
     def _apply_wobble_highpass(self, effect: Wobble, segment: np.ndarray, bpm: float) -> np.ndarray:
-        """Render ProcessWobbleInternal's high-pass filter branch."""
+        """Render Wobble's high-pass filter branch."""
         if len(segment) == 0:
             return segment.copy()
 
@@ -438,7 +441,7 @@ class FXDSP(FilterDSP):
         return output
 
     def _apply_wobble_bandpass(self, effect: Wobble, segment: np.ndarray, bpm: float) -> np.ndarray:
-        """Render ProcessWobbleInternal's band-pass filter branch."""
+        """Render Wobble's band-pass filter branch."""
         if len(segment) == 0:
             return segment.copy()
 
@@ -508,6 +511,16 @@ class FXDSP(FilterDSP):
             amount = 1.0
         if len(segment) == 0 or amount == 0:
             return segment.copy()
+
+        backend = os.environ.get("SDVX_PITCH_SHIFT_BACKEND", "librosa").lower()
+        if backend in {"auto", "rubberband"}:
+            rubberband_output = self._apply_rubberband_pitch_shift(effect, segment, amount)
+            if rubberband_output is not None:
+                return rubberband_output
+        if backend in {"auto", "librosa"}:
+            librosa_output = self._apply_librosa_pitch_shift(effect, segment, amount)
+            if librosa_output is not None:
+                return librosa_output
 
         play_speed = 2 ** (amount / 12.0)
         filtered = segment.astype(np.float64, copy=True)
@@ -586,10 +599,104 @@ class FXDSP(FilterDSP):
         )
         return output.astype(np.float32)
 
-    def _apply_tapescratch(self, effect: Tapescratch, segment: np.ndarray) -> np.ndarray:
-        """Render ``ProcessTapeScratchInternal`` for ``FXType.TAPESCRATCH``.
+    @staticmethod
+    def _rubberband_executable() -> Path | None:
+        """Locate an explicitly configured or bundled Rubber Band CLI."""
+        configured = os.environ.get("RUBBERBAND_EXECUTABLE")
+        candidates = [Path(configured)] if configured else []
+        project_root = Path(__file__).resolve().parent.parent
+        bundled_directory = project_root / "tools" / "rubberband" / "rubberband-4.0.0-gpl-executable-windows"
+        candidates.extend((bundled_directory / "rubberband-r3.exe", bundled_directory / "rubberband.exe"))
 
-        Tape Scratch has three game-defined phases.  Its attack slows down a
+        for candidate in candidates:
+            if candidate.is_file():
+                return candidate
+
+        system_executable = shutil.which("rubberband-r3") or shutil.which("rubberband")
+        return Path(system_executable) if system_executable else None
+
+    def _apply_rubberband_pitch_shift(
+        self,
+        effect: PitchShift,
+        segment: np.ndarray,
+        amount: float,
+    ) -> np.ndarray | None:
+        """Use the offline Rubber Band backend when its CLI is available."""
+        executable = self._rubberband_executable()
+        if executable is None:
+            return None
+
+        try:
+            import pyrubberband.pyrb as pyrb
+        except ImportError:
+            return None
+
+        # pyrubberband only exposes a module-level executable setting.
+        previous_executable = pyrb.__dict__["__RUBBERBAND_UTIL"]
+        pyrb.__dict__["__RUBBERBAND_UTIL"] = str(executable)
+        try:
+            wet = pyrb.pitch_shift(
+                segment,
+                self.sample_rate,
+                amount,
+                rbargs={"--centre-focus": ""},
+            )
+        except (OSError, RuntimeError, subprocess.CalledProcessError, ValueError):
+            if os.environ.get("SDVX_FX_DEBUG"):
+                print("Rubber Band pitch shift failed; using the built-in backend.")
+            return None
+        finally:
+            pyrb.__dict__["__RUBBERBAND_UTIL"] = previous_executable
+
+        wet = np.asarray(wet, dtype=np.float32)
+        if wet.ndim == 1:
+            wet = wet[:, np.newaxis]
+        if wet.shape[1] != segment.shape[1]:
+            return None
+        if len(wet) < len(segment):
+            wet = np.pad(wet, ((0, len(segment) - len(wet)), (0, 0)))
+        else:
+            wet = wet[: len(segment)]
+        return _mix(segment, wet, effect.mix)
+
+    def _apply_librosa_pitch_shift(
+        self,
+        effect: PitchShift,
+        segment: np.ndarray,
+        amount: float,
+    ) -> np.ndarray | None:
+        """Use librosa's phase-vocoder pitch shift when selected."""
+        try:
+            import librosa
+        except ImportError:
+            return None
+
+        try:
+            # librosa treats the final axis as samples; renderer audio is frame-major.
+            wet = librosa.effects.pitch_shift(
+                segment.T,
+                sr=self.sample_rate,
+                n_steps=amount,
+                res_type="soxr_hq",
+            ).T
+        except (RuntimeError, ValueError):
+            if os.environ.get("SDVX_FX_DEBUG"):
+                print("librosa pitch shift failed; using the built-in backend.")
+            return None
+
+        wet = np.asarray(wet, dtype=np.float32)
+        if wet.ndim == 1:
+            wet = wet[:, np.newaxis]
+        if wet.shape[1] != segment.shape[1]:
+            return None
+        if len(wet) < len(segment):
+            wet = np.pad(wet, ((0, len(segment) - len(wet)), (0, 0)))
+        else:
+            wet = wet[: len(segment)]
+        return _mix(segment, wet, effect.mix)
+
+    def _apply_tapescratch(self, effect: Tapescratch, segment: np.ndarray) -> np.ndarray:
+        """Tape Scratch has three game-defined phases.  Its attack slows down a
         cached copy of the input while fading it out, hold removes the wet
         signal, and release plays a prefetched buffer with the inverse speed
         curve while restoring its volume.  Phase selection happens per audio
