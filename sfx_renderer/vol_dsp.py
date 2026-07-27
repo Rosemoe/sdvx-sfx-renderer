@@ -8,6 +8,7 @@ import numpy as np
 from scipy import signal
 
 from sdvxparser.classes.chart import ChartInfo
+from sdvxparser.classes.effects import Bitcrush, Effect, HighpassFilter, LowpassFilter
 from sdvxparser.classes.enums import EasingType, FilterIndex, NoteType, SegmentFlag
 
 from .audio import clamp, overlay_audio
@@ -17,7 +18,6 @@ from .vol_peaking import get_peak_parameters
 _clamp = clamp
 
 LASER_FILTER_UPDATE_HZ = 20.0
-LASER_V_EASING_PER_44100_FRAME = 0.01
 
 class VolDSP(FilterDSP):
     def _render_vol_effects(self, chart: ChartInfo, output: np.ndarray, *, offset_ms: float) -> None:
@@ -70,7 +70,12 @@ class VolDSP(FilterDSP):
             if not active[start]:
                 continue
             filter_index = self._coerce_filter_index(int(laser_filter[start]))
-            output[start:end] = self._apply_laser_filter(output[start:end], laser_value[start:end], filter_index)
+            filter_effect = self._get_laser_filter(chart, filter_index)
+            output[start:end] = self._apply_laser_filter(
+                output[start:end],
+                laser_value[start:end],
+                filter_effect,
+            )
             rendered_ranges += 1
 
         if os.environ.get("SDVX_FX_DEBUG"):
@@ -95,13 +100,24 @@ class VolDSP(FilterDSP):
         except ValueError:
             return FilterIndex.PEAK
 
-    def _apply_laser_filter(self, segment: np.ndarray, values: np.ndarray, filter_index: FilterIndex) -> np.ndarray:
-        if filter_index in (FilterIndex.LPF_ALT, FilterIndex.LPF):
-            return self._apply_laser_pass_filter(segment, values, "lowpass")
-        if filter_index in (FilterIndex.HPF_ALT, FilterIndex.HPF):
-            return self._apply_laser_pass_filter(segment, values, "highpass")
-        if filter_index == FilterIndex.BITCRUSH:
-            return self._apply_laser_bitcrusher(segment, values)
+    def _get_laser_filter(self, chart: ChartInfo, filter_index: FilterIndex) -> Effect | None:
+        index = filter_index.value - 1
+        if 0 <= index < len(chart.filter_list):
+            return chart.filter_list[index]
+        return None
+
+    def _apply_laser_filter(
+        self,
+        segment: np.ndarray,
+        values: np.ndarray,
+        filter_effect: Effect | None,
+    ) -> np.ndarray:
+        if isinstance(filter_effect, LowpassFilter):
+            return self._apply_laser_pass_filter(segment, values, filter_effect)
+        if isinstance(filter_effect, HighpassFilter):
+            return self._apply_laser_pass_filter(segment, values, filter_effect)
+        if isinstance(filter_effect, Bitcrush):
+            return self._apply_laser_bitcrusher(segment, values, filter_effect.amount)
         return self._apply_laser_peaking_filter(segment, values)
 
     def _apply_laser_peaking_filter(self, segment: np.ndarray, values: np.ndarray) -> np.ndarray:
@@ -120,7 +136,12 @@ class VolDSP(FilterDSP):
             wet[start:end] = signal.lfilter(b, a, segment[start:end], axis=0)
         return wet
 
-    def _apply_laser_pass_filter(self, segment: np.ndarray, values: np.ndarray, filter_type: str) -> np.ndarray:
+    def _apply_laser_pass_filter(
+        self,
+        segment: np.ndarray,
+        values: np.ndarray,
+        filter_effect: LowpassFilter | HighpassFilter,
+    ) -> np.ndarray:
         if len(segment) == 0:
             return segment.copy()
 
@@ -128,23 +149,17 @@ class VolDSP(FilterDSP):
         wet = np.empty_like(segment)
         input_history = np.zeros((channels, 2), dtype=np.float64)
         output_history = np.zeros((channels, 2), dtype=np.float64)
-        smoothed_v = float(values[0])
-        easing_per_frame = LASER_V_EASING_PER_44100_FRAME * 44100.0 / self.sample_rate
         block_size = max(1, round(self.sample_rate / LASER_FILTER_UPDATE_HZ))
 
         for start in range(0, len(segment), block_size):
             end = min(start + block_size, len(segment))
-            target_v = float(values[end - 1])
-            max_change = easing_per_frame * (end - start)
-            smoothed_v += _clamp(target_v - smoothed_v, -max_change, max_change)
-            if filter_type == "lowpass":
-                freq = self._geom_lerp(15000.0, 800.0, smoothed_v)
-                mix_skipped = freq > 14800.0
-                b, a = self._biquad_pass(freq, q=3.6, filter_type="lowpass")
+            t = float(values[(start + end - 1) // 2])
+            if isinstance(filter_effect, LowpassFilter):
+                freq = self._geom_lerp(filter_effect.cutoff, filter_effect.vol_cutoff_bound, 1.0 - t)
+                b, a = self._biquad_pass(freq, q=max(filter_effect.q, 0.1), filter_type="lowpass")
             else:
-                freq = self._geom_lerp(100.0, 2200.0, smoothed_v)
-                mix_skipped = freq < 200.0
-                b, a = self._biquad_pass(freq, q=5.0, filter_type="highpass")
+                freq = self._geom_lerp(filter_effect.cutoff, filter_effect.vol_cutoff_bound, t)
+                b, a = self._biquad_pass(freq, q=max(filter_effect.q, 0.1), filter_type="highpass")
 
             block = segment[start:end].astype(np.float64, copy=False)
             filtered = np.empty_like(block)
@@ -173,16 +188,16 @@ class VolDSP(FilterDSP):
                 output_history[:, 1] = output_history[:, 0]
                 output_history[:, 0] = filtered[-1]
 
-            wet[start:end] = block if mix_skipped else filtered
+            wet[start:end] = filtered
         return wet
 
-    def _apply_laser_bitcrusher(self, segment: np.ndarray, values: np.ndarray) -> np.ndarray:
+    def _apply_laser_bitcrusher(self, segment: np.ndarray, values: np.ndarray, amount: int) -> np.ndarray:
         wet = segment.copy()
         block_size = max(1, round(self.sample_rate / LASER_FILTER_UPDATE_HZ))
         for start in range(0, len(segment), block_size):
             end = min(start + block_size, len(segment))
             v = float(values[(start + end - 1) // 2])
-            hold = max(1, int(round(v * 30.0)))
+            hold = max(1, int(round(v * amount)))
             for sample in range(start, end, hold):
                 wet[sample : min(sample + hold, end)] = wet[sample]
         return wet

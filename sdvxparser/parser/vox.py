@@ -18,15 +18,15 @@ from ..classes.chart import (
     TICKS_PER_BAR,
 )
 from ..classes.effects import (
+    Bitcrush,
     Effect,
     EffectEntry,
+    HighpassFilter,
+    LowpassFilter,
     from_vox_params,
 )
 from ..classes.filters import (
     AutoTabParam,
-    BitcrushFilter,
-    HighpassFilter,
-    LowpassFilter,
 )
 from ..classes.enums import (
     EasingType,
@@ -309,19 +309,19 @@ class VOXParser:
             if effect_type == 1 and len(params) >= 4:
                 tab_effect = LowpassFilter(
                     mix=params[0],
-                    min_cutoff=params[1],
-                    max_cutoff=params[2],
-                    bandwidth=params[3],
+                    vol_cutoff_bound=params[1],
+                    cutoff=params[2],
+                    q=params[3],
                 )
             elif effect_type == 2 and len(params) >= 4:
                 tab_effect = HighpassFilter(
                     mix=params[0],
-                    min_cutoff=params[1],
-                    max_cutoff=params[2],
-                    bandwidth=params[3],
+                    cutoff=params[1],
+                    vol_cutoff_bound=params[2],
+                    q=params[3],
                 )
             elif effect_type == 3 and len(params) >= 2:
-                tab_effect = BitcrushFilter(mix=params[0], max_amount=int(params[1]))
+                tab_effect = Bitcrush(mix=params[0], amount=int(params[1]))
 
             if tab_effect is not None:
                 self._chart.filter_list.append(tab_effect)

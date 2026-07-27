@@ -29,7 +29,6 @@ from .enums import (
 )
 from .filters import (
     AutoTabParam,
-    Filter,
     get_default_filters,
 )
 from .time import (
@@ -360,7 +359,7 @@ class ChartInfo:
 
     # Effect info
     effect_list: list[EffectEntry] = field(default_factory=list)
-    filter_list: list[Filter] = field(default_factory=list)
+    filter_list: list[Effect] = field(default_factory=list)
     autotab_params: list[AutoTabParam] = field(default_factory=list)
 
     active_filter: dict[TimePoint, FilterIndex] = field(default_factory=dict)

@@ -69,9 +69,9 @@ class FXDSP(FilterDSP):
         if isinstance(effect, Tapescratch):
             return self._apply_tapescratch(effect, segment)
         if isinstance(effect, LowpassFilter):
-            return self._apply_static_filter(segment, "lowpass", effect.low_cutoff, effect.mix, max(effect.bandwidth, 0.1))
+            return self._apply_lowpass_filter(effect, segment)
         if isinstance(effect, HighpassFilter):
-            return self._apply_static_filter(segment, "highpass", effect.cutoff, effect.mix, max(effect.bandwidth, 0.1))
+            return self._apply_highpass_filter(effect, segment)
         return segment
     def _beats_to_samples(self, beats: float, bpm: float) -> int:
         return max(1, int(round((60.0 / max(bpm, 1.0)) * beats * self.sample_rate)))
@@ -819,4 +819,14 @@ class FXDSP(FilterDSP):
         wet = signal.sosfilt(sos, segment, axis=0)
         return _mix(segment, wet, mix)
 
+    def _apply_lowpass_filter(self, effect: LowpassFilter, segment: np.ndarray) -> np.ndarray:
+        q = max(effect.q, 0.1)
+        b, a = self._biquad_pass(effect.cutoff, q=q, filter_type="lowpass")
+        wet = signal.lfilter(b, a, segment, axis=0)
+        return _mix(segment, wet, effect.mix)
 
+    def _apply_highpass_filter(self, effect: HighpassFilter, segment: np.ndarray) -> np.ndarray:
+        q = max(effect.q, 0.1)
+        b, a = self._biquad_pass(effect.cutoff, q=q, filter_type="highpass")
+        wet = signal.lfilter(b, a, segment, axis=0)
+        return _mix(segment, wet, effect.mix)

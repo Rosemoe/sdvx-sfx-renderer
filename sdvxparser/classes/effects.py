@@ -401,9 +401,9 @@ class LowpassFilter(Effect):
     """A class representing a low-pass filter effect."""
 
     mix: float = 75.00
-    low_cutoff: float = 400.00
-    hi_cutoff: float = 900.00
-    bandwidth: float = 2.00  # Haven't quite figured this one out, actually
+    vol_cutoff_bound: float = 400.00
+    cutoff: float = 900.00
+    q: float = 2.00
 
     @property
     def effect_index(self) -> FXType:
@@ -414,9 +414,9 @@ class LowpassFilter(Effect):
             [
                 f"{self.effect_index.value}",
                 f"{self.mix:.2f}",
-                f"{self.low_cutoff:.2f}",
-                f"{self.hi_cutoff:.2f}",
-                f"{self.bandwidth:.2f}",
+                f"{self.vol_cutoff_bound:.2f}",
+                f"{self.cutoff:.2f}",
+                f"{self.q:.2f}",
             ]
         )
 
@@ -428,8 +428,8 @@ class HighpassFilter(Effect):
 
     mix: float = 100.00
     cutoff: float = 2000.00
-    curve_slope: float = 5.00
-    bandwidth: float = 1.40
+    vol_cutoff_bound: float = 5.00
+    q: float = 1.40
 
     @property
     def effect_index(self) -> FXType:
@@ -441,8 +441,8 @@ class HighpassFilter(Effect):
                 f"{self.effect_index.value}",
                 f"{self.mix:.2f}",
                 f"{self.cutoff:.2f}",
-                f"{self.curve_slope:.2f}",
-                f"{self.bandwidth:.2f}",
+                f"{self.vol_cutoff_bound:.2f}",
+                f"{self.q:.2f}",
             ]
         )
 
@@ -551,9 +551,9 @@ def from_vox_params(effect_index: int, params: Sequence[float]) -> Effect:
                 release=get(4, 1.0),
             )
         case FXType.LOW_PASS_FILTER:
-            return LowpassFilter(mix=get(0, 75.0), low_cutoff=get(1, 400.0), hi_cutoff=get(2, 900.0), bandwidth=get(3, 2.0))
+            return LowpassFilter(mix=get(0, 75.0), vol_cutoff_bound=get(1, 400.0), cutoff=get(2, 900.0), q=get(3, 2.0))
         case FXType.HIGH_PASS_FILTER:
-            return HighpassFilter(mix=get(0, 100.0), cutoff=get(1, 2000.0), curve_slope=get(2, 5.0), bandwidth=get(3, 1.4))
+            return HighpassFilter(mix=get(0, 100.0), cutoff=get(1, 2000.0), vol_cutoff_bound=get(2, 5.0), q=get(3, 1.4))
 
 
 def get_default_effects() -> list[EffectEntry]:
