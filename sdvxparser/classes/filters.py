@@ -32,5 +32,5 @@ def get_default_filters() -> list[Effect]:
         LowpassFilter(mix=90.00, vol_cutoff_bound=600.00, cutoff=15000.00, q=5.00),
         HighpassFilter(mix=90.00, cutoff=40.00, vol_cutoff_bound=5000.00, q=0.70),
         HighpassFilter(mix=90.00, cutoff=40.00, vol_cutoff_bound=2000.00, q=3.00),
-        Bitcrush(mix=100.00, amount=30),
+        Bitcrush(mix=100.00, hold_samples=30),
     ]

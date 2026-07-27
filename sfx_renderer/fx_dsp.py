@@ -134,12 +134,12 @@ class FXDSP(FilterDSP):
         final_update_period = _clamp(calculated_update_period, 0.1, 8.0)
         feedback = _clamp(effect.feedback, 0.1, 1.0)
         wavelength = max(1, min(int(effect.wavelength), 32))
-        amount = _clamp(effect.amount, 0.1, 1.0)
-        decay = _clamp(effect.decay, 0.0, 1.0)
+        active_ratio = _clamp(effect.active_ratio, 0.1, 1.0)
+        fade_ratio = _clamp(effect.fade_ratio, 0.0, 1.0)
 
         period_samples = max(1, int(final_update_period * self.sample_rate) // wavelength)
-        amount_samples = int(period_samples * amount)
-        decay_samples = int(amount_samples * decay)
+        active_samples = int(period_samples * active_ratio)
+        fade_samples = int(active_samples * fade_ratio)
         if os.environ.get("SDVX_FX_DEBUG"):
             print(
                 "Retrigger debug: "
@@ -150,8 +150,8 @@ class FXDSP(FilterDSP):
                 f"calculatedUpdatePeriod={calculated_update_period:.6f} "
                 f"period_samples={period_samples} "
                 f"period_sec={period_samples / self.sample_rate:.6f} "
-                f"amount_samples={amount_samples} "
-                f"decay_samples={decay_samples}"
+                f"active_samples={active_samples} "
+                f"fade_samples={fade_samples}"
             )
         indices = np.arange(len(segment))
         phase = indices % period_samples
@@ -162,14 +162,14 @@ class FXDSP(FilterDSP):
             source_indices = indices - period_samples * repeats
 
         wet = np.zeros_like(segment)
-        active = phase <= amount_samples
+        active = phase <= active_samples
         if np.any(active):
             gain = np.power(feedback, repeats[active], dtype=np.float64)
-            if decay_samples > 0:
+            if fade_samples > 0:
                 active_phase = phase[active]
-                fading = active_phase > amount_samples - decay_samples
+                fading = active_phase > active_samples - fade_samples
                 if np.any(fading):
-                    gain[fading] *= (amount_samples - active_phase[fading]) / decay_samples
+                    gain[fading] *= (active_samples - active_phase[fading]) / fade_samples
             wet[active] = segment[source_indices[active]] * gain[:, None]
 
         return _mix(segment, wet, mix)
@@ -259,10 +259,10 @@ class FXDSP(FilterDSP):
 
         mix = _clamp(effect.mix / 100.0, 0.0, 1.0)
         speed = _clamp(effect.speed, 1.0, 10.0)
-        rate = _clamp(effect.rate, 0.1, 2.0)
-        rate_samples = max(1, int(rate * self.sample_rate))
+        duration_seconds = _clamp(effect.duration_seconds, 0.1, 2.0)
+        duration_samples = max(1, int(duration_seconds * self.sample_rate))
         output = np.empty_like(segment)
-        capture = np.zeros((rate_samples, segment.shape[1]), dtype=np.float64)
+        capture = np.zeros((duration_samples, segment.shape[1]), dtype=np.float64)
 
         # The caller resets these fields once per TapeStop event, then invokes
         # ProcessTapeStopInternal for consecutive fixed-size audio blocks.
@@ -275,8 +275,8 @@ class FXDSP(FilterDSP):
             block = segment[start:end]
 
             # The game switches a whole processing block to dry output once
-            # that block would reach the configured rate duration.
-            if elapsed_samples + len(block) >= rate_samples:
+            # that block would reach the configured effect duration.
+            if elapsed_samples + len(block) >= duration_samples:
                 output[start:end] = block * (1.0 - mix)
                 continue
 
@@ -285,9 +285,9 @@ class FXDSP(FilterDSP):
                 if read_phase < 1.0:
                     previous_read_index = read_index
                     read_index += 1
-                    read_phase += 1.0 + previous_read_index * speed / rate_samples
+                    read_phase += 1.0 + previous_read_index * speed / duration_samples
 
-                envelope = 1.0 - elapsed_samples / rate_samples
+                envelope = 1.0 - elapsed_samples / duration_samples
                 wet = capture[read_index]
                 output[start + offset] = wet * (mix * envelope) + dry * (1.0 - mix)
                 elapsed_samples += 1
@@ -365,7 +365,7 @@ class FXDSP(FilterDSP):
         input_history = np.zeros((channels, 2), dtype=np.float64)
         output_history = np.zeros((channels, 2), dtype=np.float64)
         mix = _clamp(effect.mix / 100.0, 0.0, 1.0)
-        q = max(effect.bandwidth, 0.1)
+        q = max(effect.q, 0.1)
         output_gain = 1.0 - q * 0.04
         period_samples = max(
             1,
@@ -408,7 +408,7 @@ class FXDSP(FilterDSP):
         input_history = np.zeros((channels, 2), dtype=np.float64)
         output_history = np.zeros((channels, 2), dtype=np.float64)
         mix = _clamp(effect.mix / 100.0, 0.0, 1.0)
-        q = max(effect.bandwidth, 0.1)
+        q = max(effect.q, 0.1)
         output_gain = 1.0 - q * 0.04
         period_samples = max(
             1,
@@ -451,7 +451,7 @@ class FXDSP(FilterDSP):
         input_history = np.zeros((channels, 2), dtype=np.float64)
         output_history = np.zeros((channels, 2), dtype=np.float64)
         mix = _clamp(effect.mix / 100.0, 0.0, 1.0)
-        q = max(effect.bandwidth, 0.1)
+        q = max(effect.q, 0.1)
         if q <= 1.0:
             band_gain = q + 0.9
         else:
@@ -489,7 +489,7 @@ class FXDSP(FilterDSP):
         return output
 
     def _apply_bitcrush(self, effect: Bitcrush, segment: np.ndarray) -> np.ndarray:
-        hold = int(clamp(effect.amount, 1, 30))
+        hold = min(max(effect.hold_samples, 1), 30)
         wet = segment.copy()
         for start in range(0, len(wet), hold):
             wet[start : start + hold] = wet[start]
@@ -502,25 +502,25 @@ class FXDSP(FilterDSP):
         *,
         active_start_sample: int = 0,
     ) -> np.ndarray:
-        amount = _clamp(effect.amount, -12, 12)
-        if -1.0 < amount < 0.0:
-            amount = -1.0
-        elif 0.0 < amount < 1.0:
-            amount = 1.0
-        if len(segment) == 0 or amount == 0:
+        semitones = _clamp(effect.semitones, -12, 12)
+        if -1.0 < semitones < 0.0:
+            semitones = -1.0
+        elif 0.0 < semitones < 1.0:
+            semitones = 1.0
+        if len(segment) == 0 or semitones == 0:
             return segment.copy()
 
         backend = os.environ.get("SDVX_PITCH_SHIFT_BACKEND", "librosa").lower()
         if backend in {"auto", "rubberband"}:
-            rubberband_output = self._apply_rubberband_pitch_shift(effect, segment, amount)
+            rubberband_output = self._apply_rubberband_pitch_shift(effect, segment, semitones)
             if rubberband_output is not None:
                 return rubberband_output
         if backend in {"auto", "librosa"}:
-            librosa_output = self._apply_librosa_pitch_shift(effect, segment, amount)
+            librosa_output = self._apply_librosa_pitch_shift(effect, segment, semitones)
             if librosa_output is not None:
                 return librosa_output
 
-        play_speed = 2 ** (amount / 12.0)
+        play_speed = 2 ** (semitones / 12.0)
         filtered = segment.astype(np.float64, copy=True)
         if play_speed > 1.0:
             cutoff = self.sample_rate / (2.0 * play_speed) * 0.95
@@ -617,7 +617,7 @@ class FXDSP(FilterDSP):
         self,
         effect: PitchShift,
         segment: np.ndarray,
-        amount: float,
+        semitones: float,
     ) -> np.ndarray | None:
         """Use the offline Rubber Band backend when its CLI is available."""
         executable = self._rubberband_executable()
@@ -636,7 +636,7 @@ class FXDSP(FilterDSP):
             wet = pyrb.pitch_shift(
                 segment,
                 self.sample_rate,
-                amount,
+                semitones,
                 rbargs={"--centre-focus": ""},
             )
         except (OSError, RuntimeError, subprocess.CalledProcessError, ValueError):
@@ -661,7 +661,7 @@ class FXDSP(FilterDSP):
         self,
         effect: PitchShift,
         segment: np.ndarray,
-        amount: float,
+        semitones: float,
     ) -> np.ndarray | None:
         """Use librosa's phase-vocoder pitch shift when selected."""
         try:
@@ -674,7 +674,7 @@ class FXDSP(FilterDSP):
             wet = librosa.effects.pitch_shift(
                 segment.T,
                 sr=self.sample_rate,
-                n_steps=amount,
+                n_steps=semitones,
                 res_type="soxr_hq",
             ).T
         except (RuntimeError, ValueError):
@@ -809,13 +809,6 @@ class FXDSP(FilterDSP):
             elapsed += block_size
 
         return output.astype(segment.dtype, copy=False)
-
-    def _apply_static_filter(self, segment: np.ndarray, filter_type: str, cutoff: float, mix: float, q: float) -> np.ndarray:
-        nyquist = self.sample_rate / 2.0
-        cutoff = _clamp(cutoff, 20.0, nyquist - 100.0)
-        sos = signal.butter(max(1, min(4, int(round(q)))), cutoff, btype=filter_type, fs=self.sample_rate, output="sos")
-        wet = signal.sosfilt(sos, segment, axis=0)
-        return _mix(segment, wet, mix)
 
     def _apply_lowpass_filter(self, effect: LowpassFilter, segment: np.ndarray) -> np.ndarray:
         q = max(effect.q, 0.1)

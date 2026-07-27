@@ -135,8 +135,8 @@ class Retrigger(Effect):
     wavelength: int = 4
     update_period: float = 2.00
     feedback: float = 1.00
-    amount: float = 0.85
-    decay: float = 0.15
+    active_ratio: float = 0.85
+    fade_ratio: float = 0.15
 
     @property
     def effect_index(self) -> FXType:
@@ -150,8 +150,8 @@ class Retrigger(Effect):
                 f"{self.mix:.2f}",
                 f"{self.update_period:.2f}",
                 f"{self.feedback:.2f}",
-                f"{self.amount:.2f}",
-                f"{self.decay:.2f}",
+                f"{self.active_ratio:.2f}",
+                f"{self.fade_ratio:.2f}",
             ]
         )
 
@@ -209,14 +209,16 @@ class Tapestop(Effect):
 
     mix: float = 100.00
     speed: float = 8.00
-    rate: float = 0.40
+    duration_seconds: float = 0.40
 
     @property
     def effect_index(self) -> FXType:
         return FXType.TAPESTOP
 
     def to_vox_string(self) -> str:
-        return ",\t".join([f"{self.effect_index.value}", f"{self.mix:.2f}", f"{self.speed:.2f}", f"{self.rate:.2f}"])
+        return ",\t".join(
+            [f"{self.effect_index.value}", f"{self.mix:.2f}", f"{self.speed:.2f}", f"{self.duration_seconds:.2f}"]
+        )
 
 
 @_register_effect
@@ -258,7 +260,7 @@ class Wobble(Effect):
     low_cutoff: float = 500.00
     hi_cutoff: float = 18000.00
     frequency: float = 4.00
-    bandwidth: float = 1.40
+    q: float = 1.40
 
     @property
     def effect_index(self) -> FXType:
@@ -274,7 +276,7 @@ class Wobble(Effect):
                 f"{self.low_cutoff:.2f}",
                 f"{self.hi_cutoff:.2f}",
                 f"{self.frequency:.2f}",
-                f"{self.bandwidth:.2f}",
+                f"{self.q:.2f}",
             ]
         )
 
@@ -285,14 +287,14 @@ class Bitcrush(Effect):
     """A class representing a bitcrush effect."""
 
     mix: float = 100.00
-    amount: int = 12
+    hold_samples: int = 12
 
     @property
     def effect_index(self) -> FXType:
         return FXType.BITCRUSH
 
     def to_vox_string(self) -> str:
-        return ",\t".join([f"{self.effect_index.value}", f"{self.mix:.2f}", f"{self.amount}"])
+        return ",\t".join([f"{self.effect_index.value}", f"{self.mix:.2f}", f"{self.hold_samples}"])
 
 
 @_register_effect
@@ -308,8 +310,8 @@ class RetriggerEx(Effect):
     wavelength: int = 8
     update_period: float = 2.00
     feedback: float = 1.00
-    amount: float = 0.85
-    decay: float = 0.15
+    active_ratio: float = 0.85
+    fade_ratio: float = 0.15
 
     @property
     def effect_index(self) -> FXType:
@@ -323,8 +325,8 @@ class RetriggerEx(Effect):
                 f"{self.mix:.2f}",
                 f"{self.update_period:.2f}",
                 f"{self.feedback:.2f}",
-                f"{self.amount:.2f}",
-                f"{self.decay:.2f}",
+                f"{self.active_ratio:.2f}",
+                f"{self.fade_ratio:.2f}",
             ]
         )
 
@@ -335,14 +337,14 @@ class PitchShift(Effect):
     """A class representing a pitch shift effect."""
 
     mix: float = 100.00
-    amount: float = 12.00
+    semitones: float = 12.00
 
     @property
     def effect_index(self) -> FXType:
         return FXType.PITCH_SHIFT
 
     def to_vox_string(self) -> str:
-        return ",\t".join([f"{self.effect_index.value}", f"{self.mix:.2f}", f"{self.amount:.2f}"])
+        return ",\t".join([f"{self.effect_index.value}", f"{self.mix:.2f}", f"{self.semitones:.2f}"])
 
 
 @_register_effect
@@ -361,7 +363,7 @@ class PitchShiftEx(PitchShift):
             [
                 f"{self.effect_index.value}",
                 f"{self.mix:.2f}",
-                f"{self.amount:.2f}",
+                f"{self.semitones:.2f}",
                 f"{self.ex_param:.2f}",
             ]
         )
@@ -490,8 +492,8 @@ def from_vox_params(effect_index: int, params: Sequence[float]) -> Effect:
                 mix=get(1, 95.0),
                 update_period=get(2, 2.0),
                 feedback=get(3, 1.0),
-                amount=get(4, 0.85),
-                decay=get(5, 0.15),
+                active_ratio=get(4, 0.85),
+                fade_ratio=get(5, 0.15),
             )
         case FXType.GATE:
             return Gate(mix=get(0, 98.0), wavelength=int(get(1, 16)), length=get(2, 2.0))
@@ -504,7 +506,7 @@ def from_vox_params(effect_index: int, params: Sequence[float]) -> Effect:
                 hicut_gain=get(4, 2.0),
             )
         case FXType.TAPESTOP:
-            return Tapestop(mix=get(0, 100.0), speed=get(1, 8.0), rate=get(2, 0.4))
+            return Tapestop(mix=get(0, 100.0), speed=get(1, 8.0), duration_seconds=get(2, 0.4))
         case FXType.SIDECHAIN:
             return Sidechain(
                 mix=get(0, 90.0),
@@ -521,25 +523,25 @@ def from_vox_params(effect_index: int, params: Sequence[float]) -> Effect:
                 low_cutoff=get(3, 500.0),
                 hi_cutoff=get(4, 18000.0),
                 frequency=get(5, 4.0),
-                bandwidth=get(6, 1.4),
+                q=get(6, 1.4),
             )
         case FXType.BITCRUSH:
-            return Bitcrush(mix=get(0, 100.0), amount=int(get(1, 12)))
+            return Bitcrush(mix=get(0, 100.0), hold_samples=int(get(1, 12)))
         case FXType.RETRIGGER_EX:
             return RetriggerEx(
                 wavelength=int(get(0, 8)),
                 mix=get(1, 95.0),
                 update_period=get(2, 2.0),
                 feedback=get(3, 1.0),
-                amount=get(4, 0.85),
-                decay=get(5, 0.15),
+                active_ratio=get(4, 0.85),
+                fade_ratio=get(5, 0.15),
             )
         case FXType.PITCH_SHIFT:
-            return PitchShift(mix=get(0, 100.0), amount=get(1, 12.0))
+            return PitchShift(mix=get(0, 100.0), semitones=get(1, 12.0))
         case FXType.PITCH_SHIFT_EX:
             return PitchShiftEx(
                 mix=get(0, 100.0),
-                amount=get(1, 12.0),
+                semitones=get(1, 12.0),
                 ex_param=get(2, 1.0),
             )
         case FXType.TAPESCRATCH:
@@ -562,17 +564,17 @@ def get_default_effects() -> list[EffectEntry]:
         # Re8
         EffectEntry(Retrigger()),
         # Re16
-        EffectEntry(Retrigger(wavelength=8, decay=0.1)),
+        EffectEntry(Retrigger(wavelength=8, fade_ratio=0.1)),
         # Ga16
         EffectEntry(Gate()),
         # Flanger
         EffectEntry(Flanger()),
         # Re32
-        EffectEntry(Retrigger(wavelength=16, amount=0.87, decay=0.13)),
+        EffectEntry(Retrigger(wavelength=16, active_ratio=0.87, fade_ratio=0.13)),
         # Ga8
         EffectEntry(Gate(wavelength=4)),
         # Echo4
-        EffectEntry(RetriggerEx(mix=100, wavelength=4, update_period=4, feedback=0.6, amount=1, decay=0.8)),
+        EffectEntry(RetriggerEx(mix=100, wavelength=4, update_period=4, feedback=0.6, active_ratio=1, fade_ratio=0.8)),
         # Tapestop
         EffectEntry(Tapestop()),
         # Sidechain

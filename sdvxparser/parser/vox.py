@@ -321,7 +321,7 @@ class VOXParser:
                     q=params[3],
                 )
             elif effect_type == 3 and len(params) >= 2:
-                tab_effect = Bitcrush(mix=params[0], amount=int(params[1]))
+                tab_effect = Bitcrush(mix=params[0], hold_samples=int(params[1]))
 
             if tab_effect is not None:
                 self._chart.filter_list.append(tab_effect)
