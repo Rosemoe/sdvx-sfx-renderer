@@ -5,7 +5,6 @@ __all__ = [
     "SpinType",
     "EasingType",
     "TiltType",
-    "FilterIndex",
     "SegmentFlag",
     "VOXSection",
     "NoteType",
@@ -38,18 +37,6 @@ class TiltType(Enum):
     NORMAL = 0
     BIGGER = 1
     KEEP = 2
-
-
-class FilterIndex(Enum):
-    """Laser filter index."""
-
-    PEAK = 0
-    LPF_ALT = 1
-    LPF = 2
-    HPF_ALT = 3
-    HPF = 4
-    BITCRUSH = 5
-    CUSTOM = 6
 
 
 class SegmentFlag(Flag):

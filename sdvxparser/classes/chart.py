@@ -21,7 +21,6 @@ from .effects import (
 )
 from .enums import (
     EasingType,
-    FilterIndex,
     NoteType,
     SegmentFlag,
     SpinType,
@@ -138,7 +137,7 @@ class VolInfo(Validateable):
     spin_type: SpinType = SpinType.NO_SPIN
     spin_duration: int = 0
     ease_type: EasingType = EasingType.NO_EASING
-    filter_index: FilterIndex = FilterIndex.PEAK
+    filter_index: int = 0
     point_type: SegmentFlag = SegmentFlag.START
     wide_laser: bool = False
     interpolated: bool = False
@@ -362,7 +361,6 @@ class ChartInfo:
     filter_list: list[Effect] = field(default_factory=list)
     autotab_params: list[AutoTabParam] = field(default_factory=list)
 
-    active_filter: dict[TimePoint, FilterIndex] = field(default_factory=dict)
     autotab_infos: dict[TimePoint, AutoTabInfo] = field(default_factory=dict)
     post_effect_infos: list[PostEffectInfo] = field(default_factory=list)
 
@@ -399,7 +397,6 @@ class ChartInfo:
         self.bpms[TimePoint()] = Decimal("120")
         self.timesigs[TimePoint()] = TimeSignature()
         self.tilt_type[TimePoint()] = TiltType.NORMAL
-        self.active_filter[TimePoint()] = FilterIndex.PEAK
 
         # Populate filter list
         self.filter_list = get_default_filters()

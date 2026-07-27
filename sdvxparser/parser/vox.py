@@ -30,7 +30,6 @@ from ..classes.filters import (
 )
 from ..classes.enums import (
     EasingType,
-    FilterIndex,
     NoteType,
     SegmentFlag,
     SpinType,
@@ -395,7 +394,7 @@ class VOXParser:
             spin_type_str = match["spin_type"]
             spin_type = SpinType(int(spin_type_str)) if "1" <= spin_type_str <= "5" else SpinType.NO_SPIN
             filter_type_str = match["filter_type"]
-            filter_type = FilterIndex(int(filter_type_str)) if "0" <= filter_type_str <= "6" else FilterIndex.CUSTOM
+            filter_type = int(filter_type_str)
             wide_laser = match["wide_laser"] == "2"
             ease_type_str = match["ease_type"] or "0"
             ease_type = (

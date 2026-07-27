@@ -9,7 +9,7 @@ from scipy import signal
 
 from sdvxparser.classes.chart import ChartInfo
 from sdvxparser.classes.effects import Bitcrush, Effect, HighpassFilter, LowpassFilter
-from sdvxparser.classes.enums import EasingType, FilterIndex, NoteType, SegmentFlag
+from sdvxparser.classes.enums import EasingType, NoteType, SegmentFlag
 
 from .audio import clamp, overlay_audio
 from .filters import FilterDSP
@@ -57,7 +57,7 @@ class VolDSP(FilterDSP):
                 if np.any(update_mask):
                     current[update_mask] = value_curve[update_mask]
                     filter_view = laser_filter[clip_start:clip_end]
-                    filter_view[update_mask] = vol_i.filter_index.value
+                    filter_view[update_mask] = vol_i.filter_index
 
         active = laser_filter >= 0
         if not np.any(active):
@@ -70,7 +70,7 @@ class VolDSP(FilterDSP):
         for start, end in zip(edges[:-1], edges[1:]):
             if not active[start]:
                 continue
-            filter_index = self._coerce_filter_index(int(laser_filter[start]))
+            filter_index = int(laser_filter[start])
             filter_effect = self._get_laser_filter(chart, filter_index)
             output[start:end] = self._apply_laser_filter(
                 output[start:end],
@@ -95,14 +95,8 @@ class VolDSP(FilterDSP):
             return (1.0 - lane_curve).astype(np.float32)
         return lane_curve.astype(np.float32)
 
-    def _coerce_filter_index(self, value: int) -> FilterIndex:
-        try:
-            return FilterIndex(value)
-        except ValueError:
-            return FilterIndex.PEAK
-
-    def _get_laser_filter(self, chart: ChartInfo, filter_index: FilterIndex) -> Effect | None:
-        index = filter_index.value - 1
+    def _get_laser_filter(self, chart: ChartInfo, filter_index: int) -> Effect | None:
+        index = filter_index - 1
         if 0 <= index < len(chart.filter_list):
             return chart.filter_list[index]
         return None
