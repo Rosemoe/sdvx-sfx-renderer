@@ -17,7 +17,7 @@ from .vol_peaking import get_peak_parameters
 
 _clamp = clamp
 
-LASER_FILTER_UPDATE_HZ = 20.0
+LASER_FILTER_UPDATE_HZ = 60.0
 VOL_FILTER_BLOCK_SIZE = 512
 
 class VolDSP(FilterDSP):
