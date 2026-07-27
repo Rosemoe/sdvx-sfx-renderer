@@ -1,6 +1,12 @@
 # SDVX SFX Renderer
 
-Renders SOUND VOLTEX FX button effects and VOL laser filters over chart audio from a VOX chart. It can also add knob sounds for full laser slams and optional click sounds at BT/FX note starts.
+Render SOUND VOLTEX sound effects over chart audio from a VOX chart.
+
+## Features
+
+- Parse most sections of `.vox` chart files
+- Render FX/VOL/AUTOTAB sound effects
+- Render click sounds for buttons optionally
 
 ## Usage
 
@@ -11,11 +17,6 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
-
-PitchShift uses `librosa` by default; it is included in `requirements.txt`. The optional
-`pyrubberband` backend also requires the Rubber Band command-line utility on `PATH` (or
-at `RUBBERBAND_EXECUTABLE`). Select it with
-`$env:SDVX_PITCH_SHIFT_BACKEND = "rubberband"` before rendering.
 
 Render a chart:
 
@@ -31,11 +32,17 @@ python -m sfx_renderer sample\chart.vox sample\audio.s3v -o output\render.wav --
 
 Use `python -m sfx_renderer --help` to see options for audio offset, knob sounds, and click volume.
 
+### PitchShift Backend
+
+PitchShift uses `librosa` by default; it is included in `requirements.txt`. The optional
+`pyrubberband` backend also requires the Rubber Band command-line utility on `PATH` (or
+at `RUBBERBAND_EXECUTABLE`). Select it with
+`$env:SDVX_PITCH_SHIFT_BACKEND = "rubberband"` before rendering.
+
 ## Credits
 
 - [IDA Pro](https://hex-rays.com/ida-pro)
 - [silverhawke249/pyKSH-exporter](https://github.com/silverhawke249/pyKSH-exporter)
 - [kshootmania/ksm-v2](https://github.com/kshootmania/ksm-v2)
 - [kshootmania/ksmaudio](https://github.com/kshootmania/ksmaudio)
-- [zacharied/vox2ksh](https://github.com/zacharied/vox2ksh)
 - [iDestyKK/2dx_extract](https://github.com/iDestyKK/2dx_extract)
