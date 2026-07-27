@@ -133,11 +133,11 @@ class FXDSP(FilterDSP):
         calculated_update_period = (60.0 / max(bpm, 1.0)) * effect.update_period
         final_update_period = _clamp(calculated_update_period, 0.1, 8.0)
         feedback = _clamp(effect.feedback, 0.1, 1.0)
-        wavelength = max(1, min(int(effect.wavelength), 32))
+        wave_length = max(1, min(int(effect.wave_length), 32))
         active_ratio = _clamp(effect.active_ratio, 0.1, 1.0)
         fade_ratio = _clamp(effect.fade_ratio, 0.0, 1.0)
 
-        period_samples = max(1, int(final_update_period * self.sample_rate) // wavelength)
+        period_samples = max(1, int(final_update_period * self.sample_rate) // wave_length)
         active_samples = int(period_samples * active_ratio)
         fade_samples = int(active_samples * fade_ratio)
         if os.environ.get("SDVX_FX_DEBUG"):
@@ -145,7 +145,7 @@ class FXDSP(FilterDSP):
                 "Retrigger debug: "
                 f"segment_samples={len(segment)} "
                 f"bpm={bpm:.3f} "
-                f"waveLength={effect.wavelength} "
+                f"wave_length={effect.wave_length} "
                 f"updatePeriod={effect.update_period:.3f} "
                 f"calculatedUpdatePeriod={calculated_update_period:.6f} "
                 f"period_samples={period_samples} "
@@ -155,7 +155,7 @@ class FXDSP(FilterDSP):
             )
         indices = np.arange(len(segment))
         phase = indices % period_samples
-        repeats = (indices // period_samples) % wavelength
+        repeats = (indices // period_samples) % wave_length
         if isinstance(effect, RetriggerEx):
             source_indices = phase
         else:
@@ -179,11 +179,11 @@ class FXDSP(FilterDSP):
             return segment.copy()
 
         mix = _clamp(effect.mix / 100.0, 0.0, 1.0)
-        wavelength = max(1, min(int(effect.wavelength), 32))
+        wave_length = max(1, min(int(effect.wave_length), 32))
         calculated_length = (60.0 / max(bpm, 1.0)) * effect.length
         final_length = _clamp(calculated_length, 0.1, 4.0)
         length_samples = max(1, int(final_length * self.sample_rate))
-        block_samples = max(1, length_samples // wavelength)
+        block_samples = max(1, length_samples // wave_length)
 
         positions = np.arange(len(segment)) % length_samples
         step_indices = positions // block_samples

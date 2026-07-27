@@ -132,7 +132,7 @@ class Retrigger(Effect):
     """A class representing a retrigger effect."""
 
     mix: float = 95.00
-    wavelength: int = 4
+    wave_length: int = 4
     update_period: float = 2.00
     feedback: float = 1.00
     active_ratio: float = 0.85
@@ -146,7 +146,7 @@ class Retrigger(Effect):
         return ",\t".join(
             [
                 f"{self.effect_index.value}",
-                f"{self.wavelength}",
+                f"{self.wave_length}",
                 f"{self.mix:.2f}",
                 f"{self.update_period:.2f}",
                 f"{self.feedback:.2f}",
@@ -162,7 +162,7 @@ class Gate(Effect):
     """A class representing a gate effect."""
 
     mix: float = 98.00
-    wavelength: int = 16
+    wave_length: int = 16
     length: float = 2.00
 
     @property
@@ -170,7 +170,7 @@ class Gate(Effect):
         return FXType.GATE
 
     def to_vox_string(self) -> str:
-        return ",\t".join([f"{self.effect_index.value}", f"{self.mix:.2f}", f"{self.wavelength}", f"{self.length:.2f}"])
+        return ",\t".join([f"{self.effect_index.value}", f"{self.mix:.2f}", f"{self.wave_length}", f"{self.length:.2f}"])
 
 
 @_register_effect
@@ -307,7 +307,7 @@ class RetriggerEx(Effect):
     """
 
     mix: float = 95.00
-    wavelength: int = 8
+    wave_length: int = 8
     update_period: float = 2.00
     feedback: float = 1.00
     active_ratio: float = 0.85
@@ -321,7 +321,7 @@ class RetriggerEx(Effect):
         return ",\t".join(
             [
                 f"{self.effect_index.value}",
-                f"{self.wavelength}",
+                f"{self.wave_length}",
                 f"{self.mix:.2f}",
                 f"{self.update_period:.2f}",
                 f"{self.feedback:.2f}",
@@ -488,7 +488,7 @@ def from_vox_params(effect_index: int, params: Sequence[float]) -> Effect:
             return NoEffect()
         case FXType.RETRIGGER:
             return Retrigger(
-                wavelength=int(get(0, 4)),
+                wave_length=int(get(0, 4)),
                 mix=get(1, 95.0),
                 update_period=get(2, 2.0),
                 feedback=get(3, 1.0),
@@ -496,7 +496,7 @@ def from_vox_params(effect_index: int, params: Sequence[float]) -> Effect:
                 fade_ratio=get(5, 0.15),
             )
         case FXType.GATE:
-            return Gate(mix=get(0, 98.0), wavelength=int(get(1, 16)), length=get(2, 2.0))
+            return Gate(mix=get(0, 98.0), wave_length=int(get(1, 16)), length=get(2, 2.0))
         case FXType.FLANGER:
             return Flanger(
                 mix=get(0, 75.0),
@@ -529,7 +529,7 @@ def from_vox_params(effect_index: int, params: Sequence[float]) -> Effect:
             return Bitcrush(mix=get(0, 100.0), hold_samples=int(get(1, 12)))
         case FXType.RETRIGGER_EX:
             return RetriggerEx(
-                wavelength=int(get(0, 8)),
+                wave_length=int(get(0, 8)),
                 mix=get(1, 95.0),
                 update_period=get(2, 2.0),
                 feedback=get(3, 1.0),
@@ -564,17 +564,17 @@ def get_default_effects() -> list[EffectEntry]:
         # Re8
         EffectEntry(Retrigger()),
         # Re16
-        EffectEntry(Retrigger(wavelength=8, fade_ratio=0.1)),
+        EffectEntry(Retrigger(wave_length=8, fade_ratio=0.1)),
         # Ga16
         EffectEntry(Gate()),
         # Flanger
         EffectEntry(Flanger()),
         # Re32
-        EffectEntry(Retrigger(wavelength=16, active_ratio=0.87, fade_ratio=0.13)),
+        EffectEntry(Retrigger(wave_length=16, active_ratio=0.87, fade_ratio=0.13)),
         # Ga8
-        EffectEntry(Gate(wavelength=4)),
+        EffectEntry(Gate(wave_length=4)),
         # Echo4
-        EffectEntry(RetriggerEx(mix=100, wavelength=4, update_period=4, feedback=0.6, active_ratio=1, fade_ratio=0.8)),
+        EffectEntry(RetriggerEx(mix=100, wave_length=4, update_period=4, feedback=0.6, active_ratio=1, fade_ratio=0.8)),
         # Tapestop
         EffectEntry(Tapestop()),
         # Sidechain
@@ -582,7 +582,7 @@ def get_default_effects() -> list[EffectEntry]:
         # Wo12
         EffectEntry(Wobble()),
         # Re12
-        EffectEntry(Retrigger(wavelength=6)),
+        EffectEntry(Retrigger(wave_length=6)),
         # Bitcrush
         EffectEntry(Bitcrush()),
     ]
