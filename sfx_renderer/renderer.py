@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import os
 from decimal import Decimal
-from fractions import Fraction
 from pathlib import Path
 from typing import cast
 
@@ -193,10 +192,6 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX, ShotSFX):
         }
 
         offset_seconds = Decimal(str(offset_ms)) / Decimal(1000)
-        replacement_flanger = next(
-            (entry.effect1 for entry in chart.effect_list if isinstance(entry.effect1, Flanger)),
-            Flanger(),
-        )
         events: list[FXRenderEvent[Effect]] = []
         for note_type, timepoint, fx in fx_notes:
             if fx.duration <= 0 or fx.special <= 0:
@@ -212,11 +207,6 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX, ShotSFX):
                 if following_start is not None
                 else nominal_end_timepoint
             )
-            effective_duration = chart.get_distance(timepoint, end_timepoint)
-            replacement_label = ""
-            if isinstance(effect, (Retrigger, RetriggerEx)) and effective_duration >= Fraction(1, 2):
-                effect = replacement_flanger
-                replacement_label = " Retrigger->Flanger"
             cut_label = (
                 f" cut@{chart.timepoint_to_vox(end_timepoint)}"
                 if end_timepoint < nominal_end_timepoint
@@ -236,7 +226,7 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX, ShotSFX):
                     effect=effect,
                     label=(
                         f"{note_type} {chart.timepoint_to_vox(timepoint)} "
-                        f"slot={fx.special}{replacement_label}{cut_label}"
+                        f"slot={fx.special}{cut_label}"
                     ),
                 )
             )
