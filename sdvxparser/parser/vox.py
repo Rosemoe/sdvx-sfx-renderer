@@ -93,9 +93,10 @@ SCRIPTED_TRACK_MAP: dict[str, NoteType] = {
     "SCRIPTED_TRACK8": NoteType.VOL_R,
 }
 VOL_TRACK_REGEX = re.compile(
-    r"(?P<timepoint>\d+,\d+,\d+)\s+(?P<position>\d+(?:\.\d+)?)\s+"
-    r"(?P<segment_type>\d)\s+(?P<spin_type>\d)\s+(?P<filter_type>\d)(?:\s+"
-    r"(?P<wide_laser>\d)\s+0\s+(?P<ease_type>\d)\s+(?P<spin_length>\d+))?"
+    r"^(?P<timepoint>\d+,\d+,\d+)\s+"
+    r"(?P<position>-?(?:\d+(?:\.\d*)?|\.\d+))\s+"
+    r"(?P<segment_type>\d+)\s+(?P<spin_type>\d+)\s+(?P<filter_type>\d+)"
+    r"(?P<extra_params>(?:\s+\S+)*)\s*$"
 )
 STOF_PREFIX_REGEX = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?")
 SPCONTROLLER_REGEX = re.compile(
@@ -247,9 +248,52 @@ class VOXParser:
     def _parse_vol_position(self, value: str) -> Fraction:
         """Parse a laser position using the VOX version-dependent game behavior."""
 
+        if value in {"63", "64"}:
+            return Fraction(1, 2)
         if self._vox_version >= 12:
             return Fraction(value)
         return Fraction(int(value), 127)
+
+    def _parse_vol_extra_params(self, value: str) -> tuple[int, int, int, int, int]:
+        """Decode version-specific trailing fields of a VOL track record."""
+
+        params = value.split()
+        if self._vox_version <= 5:
+            if params:
+                logger.warning(
+                    "ignoring %d extra VOL field(s) for VOX version %d",
+                    len(params),
+                    self._vox_version,
+                )
+            return 1, 0, 0, 0, 0
+
+        if self._vox_version <= 9:
+            if not params:
+                raise ValueError("VOX versions 6 through 9 VOL records require wide_laser only")
+            if len(params) > 1:
+                logger.warning(
+                    "ignoring %d extra VOL field(s) for VOX version %d",
+                    len(params) - 1,
+                    self._vox_version,
+                )
+            return int(params[0]), 0, 0, 0, 0
+
+        if len(params) < 2:
+            raise ValueError("VOX version 10 or later VOL records require wide_laser and ease_type")
+        if len(params) == 3:
+            raise ValueError("VOX version 10 or later VOL records require param_ex_1 with spin_length")
+        if len(params) > 5:
+            logger.warning(
+                "ignoring %d extra VOL field(s) for VOX version %d",
+                len(params) - 5,
+                self._vox_version,
+            )
+
+        wide_laser, ease_type = map(int, params[:2])
+        spin_length = int(params[2]) if len(params) >= 4 else 0
+        param_ex_1 = int(params[3]) if len(params) >= 4 else 0
+        param_ex_2 = int(params[4]) if len(params) >= 5 else 0
+        return wide_laser, ease_type, spin_length, param_ex_1, param_ex_2
 
     @staticmethod
     def _parse_stof(value: str) -> float:
@@ -395,8 +439,10 @@ class VOXParser:
             spin_type = SpinType(int(spin_type_str)) if "1" <= spin_type_str <= "5" else SpinType.NO_SPIN
             filter_type_str = match["filter_type"]
             filter_type = int(filter_type_str)
-            wide_laser = match["wide_laser"] == "2"
-            ease_type_str = match["ease_type"] or "0"
+            wide_laser, ease_type_value, spin_length, param_ex_1, param_ex_2 = self._parse_vol_extra_params(
+                match["extra_params"]
+            )
+            ease_type_str = str(ease_type_value)
             ease_type = (
                 EasingType.LINEAR
                 if ease_type_str == "2"
@@ -406,7 +452,6 @@ class VOXParser:
                 if ease_type_str == "5"
                 else EasingType.NO_EASING
             )
-            spin_length = int(match["spin_length"] or 0)
             # Insert into the right dictionary
             vol_dict: dict[TimePoint, VolInfo]
             if self._current_section == VOXSection.TRACK_VOL_L:
@@ -423,7 +468,16 @@ class VOXParser:
                 vol_dict[timepoint].end = position
             else:
                 vol_dict[timepoint] = VolInfo(
-                    position, position, spin_type, spin_length, ease_type, filter_type, segment_type, wide_laser
+                    start=position,
+                    end=position,
+                    spin_type=spin_type,
+                    spin_duration=spin_length,
+                    ease_type=ease_type,
+                    filter_index=filter_type,
+                    point_type=segment_type,
+                    wide_laser=wide_laser,
+                    param_ex_1=param_ex_1,
+                    param_ex_2=param_ex_2,
                 )
         elif self._current_section in [VOXSection.TRACK_FX_L, VOXSection.TRACK_FX_R]:
             timepoint = self._convert_vox_timepoint(match["timepoint"])

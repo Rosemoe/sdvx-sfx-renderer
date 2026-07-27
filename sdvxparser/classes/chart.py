@@ -139,7 +139,9 @@ class VolInfo(Validateable):
     ease_type: EasingType = EasingType.NO_EASING
     filter_index: int = 0
     point_type: SegmentFlag = SegmentFlag.START
-    wide_laser: bool = False
+    wide_laser: int = 0
+    param_ex_1: int = 0
+    param_ex_2: int = 0
     interpolated: bool = False
 
     def _setattrhook(self, __name: str, __value: Any):
