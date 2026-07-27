@@ -9,10 +9,10 @@ from typing import cast
 
 import numpy as np
 
-from sdvxparser import parse_vox
-from sdvxparser.classes.chart import ChartInfo
-from sdvxparser.classes.effects import Effect, Flanger, PitchShift, Retrigger, RetriggerEx
-from sdvxparser.classes.time import TimePoint
+from vox_parser import parse_vox
+from vox_parser.classes.chart import ChartInfo
+from vox_parser.classes.effects import Effect, Flanger, PitchShift, Retrigger, RetriggerEx
+from vox_parser.classes.time import TimePoint
 
 from .audio import decode_audio as _decode_audio
 from .audio import encode_audio as _encode_audio

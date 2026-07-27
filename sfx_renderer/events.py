@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Generic, TypeVar
 
-from sdvxparser.classes.effects import Effect
+from vox_parser.classes.effects import Effect
 
 EffectT = TypeVar("EffectT", bound=Effect)
 

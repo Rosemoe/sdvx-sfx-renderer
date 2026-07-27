@@ -6,7 +6,7 @@ from decimal import Decimal
 
 import numpy as np
 
-from sdvxparser.classes.chart import ChartInfo
+from vox_parser.classes.chart import ChartInfo
 
 from .audio import overlay_audio
 

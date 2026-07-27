@@ -7,9 +7,9 @@ from decimal import Decimal
 import numpy as np
 from scipy import signal
 
-from sdvxparser.classes.chart import ChartInfo
-from sdvxparser.classes.effects import Bitcrush, Effect, HighpassFilter, LowpassFilter
-from sdvxparser.classes.enums import EasingType, NoteType, SegmentFlag
+from vox_parser.classes.chart import ChartInfo
+from vox_parser.classes.effects import Bitcrush, Effect, HighpassFilter, LowpassFilter
+from vox_parser.classes.enums import EasingType, NoteType, SegmentFlag
 
 from .audio import clamp, overlay_audio
 from .filters import FilterDSP

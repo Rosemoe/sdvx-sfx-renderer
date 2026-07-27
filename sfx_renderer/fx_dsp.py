@@ -9,7 +9,7 @@ import subprocess
 import numpy as np
 from scipy import signal
 
-from sdvxparser.classes.effects import (
+from vox_parser.classes.effects import (
     Bitcrush,
     Effect,
     Flanger,

@@ -522,7 +522,7 @@ class ChartInfo:
         """
         Calculate the time elapsed between each BPM change.
 
-        This function is a prerequisite to :meth:`~sdvxparser.classes.chart.ChartInfo._get_elapsed_time`.
+        This function is a prerequisite to :meth:`~vox_parser.classes.chart.ChartInfo._get_elapsed_time`.
 
         :param endpoint: The time point for the end of the chart.
         """
