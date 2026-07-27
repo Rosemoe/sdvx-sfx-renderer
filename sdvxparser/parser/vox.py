@@ -136,12 +136,12 @@ SECTION_REGEX: dict[VOXSection, re.Pattern] = {
                                             r"(?P<value_1>[^\t]+)\t"
                                             r"(?P<value_2>[^\t]+)"),
     VOXSection.TRACK_VOL_L     : VOL_TRACK_REGEX,
-    VOXSection.TRACK_FX_L      : re.compile(r"(?P<timepoint>\d+,\d+,\d+)(\s+(?P<duration>\d+))?(\s+(?P<special>\d+))?"),
-    VOXSection.TRACK_BT_A      : re.compile(r"(?P<timepoint>\d+,\d+,\d+)(\s+(?P<duration>\d+))?(\s+(?P<unknown>\d+))?"),
-    VOXSection.TRACK_BT_B      : re.compile(r"(?P<timepoint>\d+,\d+,\d+)(\s+(?P<duration>\d+))?(\s+(?P<unknown>\d+))?"),
-    VOXSection.TRACK_BT_C      : re.compile(r"(?P<timepoint>\d+,\d+,\d+)(\s+(?P<duration>\d+))?(\s+(?P<unknown>\d+))?"),
-    VOXSection.TRACK_BT_D      : re.compile(r"(?P<timepoint>\d+,\d+,\d+)(\s+(?P<duration>\d+))?(\s+(?P<unknown>\d+))?"),
-    VOXSection.TRACK_FX_R      : re.compile(r"(?P<timepoint>\d+,\d+,\d+)(\s+(?P<duration>\d+))?(\s+(?P<special>\d+))?"),
+    VOXSection.TRACK_FX_L      : re.compile(r"(?P<timepoint>\d+,\d+,\d+)(\s+(?P<duration>\d+))?(\s+(?P<special>-?\d+))?(\s+(?P<param_ex>-?\d+))?"),
+    VOXSection.TRACK_BT_A      : re.compile(r"(?P<timepoint>\d+,\d+,\d+)(\s+(?P<duration>\d+))?(\s+(?P<special>-?\d+))?(\s+(?P<param_ex>-?\d+))?"),
+    VOXSection.TRACK_BT_B      : re.compile(r"(?P<timepoint>\d+,\d+,\d+)(\s+(?P<duration>\d+))?(\s+(?P<special>-?\d+))?(\s+(?P<param_ex>-?\d+))?"),
+    VOXSection.TRACK_BT_C      : re.compile(r"(?P<timepoint>\d+,\d+,\d+)(\s+(?P<duration>\d+))?(\s+(?P<special>-?\d+))?(\s+(?P<param_ex>-?\d+))?"),
+    VOXSection.TRACK_BT_D      : re.compile(r"(?P<timepoint>\d+,\d+,\d+)(\s+(?P<duration>\d+))?(\s+(?P<special>-?\d+))?(\s+(?P<param_ex>-?\d+))?"),
+    VOXSection.TRACK_FX_R      : re.compile(r"(?P<timepoint>\d+,\d+,\d+)(\s+(?P<duration>\d+))?(\s+(?P<special>-?\d+))?(\s+(?P<param_ex>-?\d+))?"),
     VOXSection.TRACK_VOL_R     : VOL_TRACK_REGEX,
     VOXSection.AUTOTAB_INFO    : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+(?P<duration>\d+)\s+(?P<effect_index>\d+)"),
     VOXSection.TRACK_VOL_L_ORIG: VOL_TRACK_REGEX,
@@ -294,6 +294,16 @@ class VOXParser:
         param_ex_1 = int(params[3]) if len(params) >= 4 else 0
         param_ex_2 = int(params[4]) if len(params) >= 5 else 0
         return wide_laser, ease_type, spin_length, param_ex_1, param_ex_2
+
+    def _normalize_button_effect(self, duration: int, effect: int) -> int:
+        """Apply the VOX version 6 button-effect compatibility mapping."""
+
+        if self._vox_version >= 6:
+            if effect in {-1, 255}:
+                return 0
+            if duration > 0 and effect == 254:
+                return 14
+        return effect
 
     @staticmethod
     def _parse_stof(value: str) -> float:
@@ -482,13 +492,14 @@ class VOXParser:
         elif self._current_section in [VOXSection.TRACK_FX_L, VOXSection.TRACK_FX_R]:
             timepoint = self._convert_vox_timepoint(match["timepoint"])
             duration = int(match["duration"] or 0)
-            special = int(match["special"] or 0)
+            special = self._normalize_button_effect(duration, int(match["special"] or 0))
+            param_ex = int(match["param_ex"] or 0) if self._vox_version >= 10 else 0
             fx_dict: dict[TimePoint, FXInfo]
             if self._current_section == VOXSection.TRACK_FX_L:
                 fx_dict = self._chart.note_data.fx_l
             else:
                 fx_dict = self._chart.note_data.fx_r
-            fx_dict[timepoint] = FXInfo(Fraction(duration, TICKS_PER_BAR), special)
+            fx_dict[timepoint] = FXInfo(Fraction(duration, TICKS_PER_BAR), special, param_ex)
         elif self._current_section in [
             VOXSection.TRACK_BT_A,
             VOXSection.TRACK_BT_B,
@@ -497,6 +508,8 @@ class VOXParser:
         ]:
             timepoint = self._convert_vox_timepoint(match["timepoint"])
             duration = int(match["duration"] or 0)
+            special = self._normalize_button_effect(duration, int(match["special"] or 0))
+            param_ex = int(match["param_ex"] or 0) if self._vox_version >= 10 else 0
             bt_dict: dict[TimePoint, BTInfo]
             if self._current_section == VOXSection.TRACK_BT_A:
                 bt_dict = self._chart.note_data.bt_a
@@ -506,7 +519,7 @@ class VOXParser:
                 bt_dict = self._chart.note_data.bt_c
             else:
                 bt_dict = self._chart.note_data.bt_d
-            bt_dict[timepoint] = BTInfo(Fraction(duration, TICKS_PER_BAR))
+            bt_dict[timepoint] = BTInfo(Fraction(duration, TICKS_PER_BAR), special, param_ex)
         elif self._current_section == VOXSection.AUTOTAB_INFO:
             timepoint = self._convert_vox_timepoint(match["timepoint"])
             duration = Fraction(int(match["duration"]), TICKS_PER_BAR)

@@ -81,6 +81,8 @@ class BTInfo(Validateable):
 
     _duration: InitVar[Fraction | int]
     duration: Fraction = field(init=False)
+    special: int = 0
+    param_ex: int = 0
 
     def _setattrhook(self, __name: str, __value: Any):
         super().__setattr__(__name, __value)
@@ -94,6 +96,8 @@ class BTInfo(Validateable):
     def validate(self):
         if self.duration < 0:
             raise ValueError(f"duration cannot be negative (got {self.duration})")
+        if self.special < 0:
+            raise ValueError(f"special must be positive (got {self.special})")
 
     def duration_as_tick(self) -> int:
         """Convert the button duration to tick count."""
@@ -107,6 +111,7 @@ class FXInfo(Validateable):
     _duration: InitVar[Fraction | int]
     duration: Fraction = field(init=False)
     special: int
+    param_ex: int = 0
 
     def _setattrhook(self, __name: str, __value: Any):
         super().__setattr__(__name, __value)
