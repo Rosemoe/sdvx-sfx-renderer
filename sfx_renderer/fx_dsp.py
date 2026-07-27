@@ -489,12 +489,10 @@ class FXDSP(FilterDSP):
         return output
 
     def _apply_bitcrush(self, effect: Bitcrush, segment: np.ndarray) -> np.ndarray:
-        hold = max(1, effect.amount)
+        hold = int(clamp(effect.amount, 1, 30))
         wet = segment.copy()
         for start in range(0, len(wet), hold):
             wet[start : start + hold] = wet[start]
-        levels = 2**8
-        wet = np.round(wet * levels) / levels
         return _mix(segment, wet, effect.mix)
 
     def _apply_pitch_shift(

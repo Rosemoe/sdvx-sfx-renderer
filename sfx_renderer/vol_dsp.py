@@ -18,6 +18,7 @@ from .vol_peaking import get_peak_parameters
 _clamp = clamp
 
 LASER_FILTER_UPDATE_HZ = 20.0
+VOL_FILTER_BLOCK_SIZE = 512
 
 class VolDSP(FilterDSP):
     def _render_vol_effects(self, chart: ChartInfo, output: np.ndarray, *, offset_ms: float) -> None:
@@ -117,7 +118,7 @@ class VolDSP(FilterDSP):
         if isinstance(filter_effect, HighpassFilter):
             return self._apply_laser_pass_filter(segment, values, filter_effect)
         if isinstance(filter_effect, Bitcrush):
-            return self._apply_laser_bitcrusher(segment, values, filter_effect.amount)
+            return self._apply_laser_bitcrusher(segment, values)
         return self._apply_laser_peaking_filter(segment, values)
 
     def _apply_laser_peaking_filter(self, segment: np.ndarray, values: np.ndarray) -> np.ndarray:
@@ -149,7 +150,7 @@ class VolDSP(FilterDSP):
         wet = np.empty_like(segment)
         input_history = np.zeros((channels, 2), dtype=np.float64)
         output_history = np.zeros((channels, 2), dtype=np.float64)
-        block_size = max(1, round(self.sample_rate / LASER_FILTER_UPDATE_HZ))
+        block_size = VOL_FILTER_BLOCK_SIZE
 
         for start in range(0, len(segment), block_size):
             end = min(start + block_size, len(segment))
@@ -191,13 +192,17 @@ class VolDSP(FilterDSP):
             wet[start:end] = filtered
         return wet
 
-    def _apply_laser_bitcrusher(self, segment: np.ndarray, values: np.ndarray, amount: int) -> np.ndarray:
+    @staticmethod
+    def _bitcrush_amount_for_value(value: float) -> int:
+        return int(_clamp(round(1.0 + _clamp(value, 0.0, 1.0) * 29.0), 1, 30))
+
+    def _apply_laser_bitcrusher(self, segment: np.ndarray, values: np.ndarray) -> np.ndarray:
         wet = segment.copy()
-        block_size = max(1, round(self.sample_rate / LASER_FILTER_UPDATE_HZ))
+        block_size = VOL_FILTER_BLOCK_SIZE
         for start in range(0, len(segment), block_size):
             end = min(start + block_size, len(segment))
             v = float(values[(start + end - 1) // 2])
-            hold = max(1, int(round(v * amount)))
+            hold = self._bitcrush_amount_for_value(v)
             for sample in range(start, end, hold):
                 wet[sample : min(sample + hold, end)] = wet[sample]
         return wet
