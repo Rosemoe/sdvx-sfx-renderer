@@ -394,7 +394,7 @@ class VOXParser:
                 self._effect_param_buffer = []
         elif self._current_section == VOXSection.TAB_PARAM_ASSIGN:
             if not self._parsed_tab_param_assign:
-                self._chart.autotab_params = []
+                self._chart.tab_param_assignments = []
                 self._tab_param_assign_buffer = []
                 self._parsed_tab_param_assign = True
 
@@ -408,7 +408,7 @@ class VOXParser:
             )
             if len(self._tab_param_assign_buffer) == 2:
                 param1, param2 = self._tab_param_assign_buffer
-                self._chart.autotab_params.append(TabParamAssignEntry(param1, param2))
+                self._chart.tab_param_assignments.append(TabParamAssignEntry(param1, param2))
                 self._tab_param_assign_buffer = []
         elif self._current_section == VOXSection.REVERB:
             pass

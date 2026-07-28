@@ -105,6 +105,29 @@ class Effect(VoxEntity, ABC):
         """Create a copy of this object."""
         return replace(self)
 
+    def get_vox_param_field(self, param_order: int) -> str | None:
+        """Return the dataclass field at a 1-based FXBUTTON VOX parameter order."""
+
+        fields_by_type: dict[FXType, tuple[str, ...]] = {
+            FXType.RETRIGGER: ("wave_length", "mix", "update_period", "feedback", "active_ratio", "fade_ratio"),
+            FXType.GATE: ("mix", "wave_length", "length"),
+            FXType.FLANGER: ("mix", "period", "feedback", "stereo_width", "hicut_gain"),
+            FXType.TAPESTOP: ("mix", "speed", "duration_seconds"),
+            FXType.SIDECHAIN: ("mix", "frequency", "attack", "hold", "release"),
+            FXType.WOBBLE: ("filter_type", "wave_shape", "mix", "low_cutoff", "hi_cutoff", "frequency", "q"),
+            FXType.BITCRUSH: ("mix", "hold_samples"),
+            FXType.RETRIGGER_EX: ("wave_length", "mix", "update_period", "feedback", "active_ratio", "fade_ratio"),
+            FXType.PITCH_SHIFT: ("mix", "semitones"),
+            FXType.TAPESCRATCH: ("mix", "curve_slope", "attack", "hold", "release"),
+            FXType.LOW_PASS_FILTER: ("mix", "vol_cutoff_bound", "cutoff", "q"),
+            FXType.HIGH_PASS_FILTER: ("mix", "cutoff", "vol_cutoff_bound", "q"),
+            FXType.PITCH_SHIFT_EX: ("mix", "semitones", "ex_param"),
+        }
+        fields = fields_by_type.get(self.effect_index)
+        if fields is None or not 1 <= param_order <= len(fields):
+            return None
+        return fields[param_order - 1]
+
 
 def _register_effect(cls):
     global _enumToEffect

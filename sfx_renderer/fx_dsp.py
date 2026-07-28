@@ -46,14 +46,28 @@ FLANGER_MAX_STAGE = 4.0
 
 
 class FXDSP(FilterDSP):
-    def apply(self, effect: Effect, segment: np.ndarray, bpm: float) -> np.ndarray:
+    def apply(
+        self,
+        effect: Effect,
+        segment: np.ndarray,
+        bpm: float,
+        *,
+        sample_offset: int = 0,
+        source_segment: np.ndarray | None = None,
+    ) -> np.ndarray:
         """Apply one FX effect to an audio segment."""
         if isinstance(effect, NoEffect):
             return segment
         if isinstance(effect, (Retrigger, RetriggerEx)):
-            return self._apply_retrigger(effect, segment, bpm)
+            return self._apply_retrigger(
+                effect,
+                segment,
+                bpm,
+                sample_offset=sample_offset,
+                source_segment=source_segment,
+            )
         if isinstance(effect, Gate):
-            return self._apply_gate(effect, segment, bpm)
+            return self._apply_gate(effect, segment, bpm, sample_offset=sample_offset)
         if isinstance(effect, Flanger):
             return self._apply_isolated_flanger(effect, segment, bpm)
         if isinstance(effect, Tapestop):
@@ -125,7 +139,15 @@ class FXDSP(FilterDSP):
         stages = int(np.ceil(_clamp(effect.hicut_gain, 0.0, FLANGER_MAX_STAGE))) + 1
         return max(1, int(np.ceil(base_delay + depth)) * stages)
 
-    def _apply_retrigger(self, effect: Retrigger | RetriggerEx, segment: np.ndarray, bpm: float) -> np.ndarray:
+    def _apply_retrigger(
+        self,
+        effect: Retrigger | RetriggerEx,
+        segment: np.ndarray,
+        bpm: float,
+        *,
+        sample_offset: int = 0,
+        source_segment: np.ndarray | None = None,
+    ) -> np.ndarray:
         if len(segment) == 0:
             return segment.copy()
 
@@ -153,7 +175,7 @@ class FXDSP(FilterDSP):
                 f"active_samples={active_samples} "
                 f"fade_samples={fade_samples}"
             )
-        indices = np.arange(len(segment))
+        indices = np.arange(len(segment)) + sample_offset
         phase = indices % period_samples
         repeats = (indices // period_samples) % wave_length
         if isinstance(effect, RetriggerEx):
@@ -161,6 +183,7 @@ class FXDSP(FilterDSP):
         else:
             source_indices = indices - period_samples * repeats
 
+        source = source_segment if source_segment is not None else segment
         wet = np.zeros_like(segment)
         active = phase <= active_samples
         if np.any(active):
@@ -170,11 +193,11 @@ class FXDSP(FilterDSP):
                 fading = active_phase > active_samples - fade_samples
                 if np.any(fading):
                     gain[fading] *= (active_samples - active_phase[fading]) / fade_samples
-            wet[active] = segment[source_indices[active]] * gain[:, None]
+            wet[active] = source[source_indices[active]] * gain[:, None]
 
         return _mix(segment, wet, mix)
 
-    def _apply_gate(self, effect: Gate, segment: np.ndarray, bpm: float) -> np.ndarray:
+    def _apply_gate(self, effect: Gate, segment: np.ndarray, bpm: float, *, sample_offset: int = 0) -> np.ndarray:
         if len(segment) == 0:
             return segment.copy()
 
@@ -185,7 +208,7 @@ class FXDSP(FilterDSP):
         length_samples = max(1, int(final_length * self.sample_rate))
         block_samples = max(1, length_samples // wave_length)
 
-        positions = np.arange(len(segment)) % length_samples
+        positions = (np.arange(len(segment)) + sample_offset) % length_samples
         step_indices = positions // block_samples
         gate_gain = (step_indices % 2 == 0).astype(np.float32)
         envelope = (1.0 - mix) + mix * gate_gain
@@ -676,6 +699,7 @@ class FXDSP(FilterDSP):
                 sr=self.sample_rate,
                 n_steps=semitones,
                 res_type="soxr_hq",
+                n_fft=min(2048, len(segment)),
             ).T
         except (RuntimeError, ValueError):
             if os.environ.get("SDVX_FX_DEBUG"):

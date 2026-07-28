@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import argparse
 import os
+from dataclasses import replace
 from decimal import Decimal
+from enum import Enum
 from pathlib import Path
 from typing import cast
 
@@ -12,6 +14,7 @@ import numpy as np
 from vox_parser import parse_vox
 from vox_parser.classes.chart import ChartInfo
 from vox_parser.classes.effects import Effect, Flanger, PitchShift, Retrigger, RetriggerEx
+from vox_parser.classes.enums import FILTER_TYPE_PARAM_ASSIGN, NoteType, SegmentFlag
 from vox_parser.classes.time import TimePoint
 
 from .audio import decode_audio as _decode_audio
@@ -24,6 +27,7 @@ from .vol_dsp import VolDSP
 
 DEFAULT_SAMPLE_RATE = 44100
 DEFAULT_CHANNELS = 2
+FX_PARAM_ASSIGN_BLOCK_SIZE = 512
 RESOURCE_DIR = Path(__file__).with_name("resources")
 DEFAULT_KNOB_PATH = RESOURCE_DIR / "knob.wav"
 DEFAULT_CLICK_PATH = RESOURCE_DIR / "click.wav"
@@ -93,6 +97,7 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX, ShotSFX):
                     if existing.start_sample == event.start_sample
                     and existing.end_sample == event.end_sample
                     and existing.chain_index == event.chain_index
+                    and existing.effect_entry_index == event.effect_entry_index
                     and type(existing.effect) is type(event.effect)
                     and existing.effect == event.effect
                 ),
@@ -109,6 +114,7 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX, ShotSFX):
                 bpm=existing.bpm,
                 effect=existing.effect,
                 chain_index=existing.chain_index,
+                effect_entry_index=existing.effect_entry_index,
                 label=f"{existing.label} | {event.label}",
             )
         return merged
@@ -128,25 +134,20 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX, ShotSFX):
     ) -> tuple[np.ndarray, list[FXRenderEvent[Effect]]]:
         """Render all active FX button holds into a copy of ``audio``."""
         events = self._collect_events(chart, len(audio), offset_ms)
+        param_assign_values, param_assign_active = self._collect_param_assign_values(
+            chart,
+            len(audio),
+            offset_ms,
+        )
         output = audio.astype(np.float32, copy=True)
         for event in events:
-            segment = output[event.start_sample : event.end_sample]
-            if len(segment) == 0:
-                continue
-            if os.environ.get("SDVX_FX_DEBUG") and isinstance(event.effect, (Retrigger, RetriggerEx)):
-                print(
-                    "FX event: "
-                    f"{event.label} "
-                    f"start_sample={event.start_sample} "
-                    f"end_sample={event.end_sample} "
-                    f"duration_samples={event.end_sample - event.start_sample}"
-                )
-            if isinstance(event.effect, PitchShift):
-                self._render_pitch_shift_event(output, cast(FXRenderEvent[PitchShift], event))
-            elif isinstance(event.effect, Flanger):
-                self._render_flanger_event(output, cast(FXRenderEvent[Flanger], event))
-            else:
-                output[event.start_sample : event.end_sample] = self.apply(event.effect, segment, event.bpm)
+            self._render_effect_event_with_param_assign(
+                chart,
+                output,
+                event,
+                param_assign_values,
+                param_assign_active,
+            )
         self._render_vol_effects(chart, output, offset_ms=offset_ms)
         if knob_audio is not None and len(knob_audio) > 0 and knob_volume > 0:
             self._render_knob_sounds(chart, output, knob_audio, offset_ms=offset_ms, volume=knob_volume)
@@ -155,6 +156,142 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX, ShotSFX):
         if shots and shot_volume > 0:
             self._render_fx_shots(chart, output, shots, offset_ms=offset_ms, volume=shot_volume)
         return output, events
+
+    def _collect_param_assign_values(
+        self,
+        chart: ChartInfo,
+        audio_samples: int,
+        offset_ms: float,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return the combined laser control curve for ``FILTER_TYPE_PARAM_ASSIGN``."""
+
+        values = np.zeros(audio_samples, dtype=np.float32)
+        active = np.zeros(audio_samples, dtype=bool)
+        offset_seconds = Decimal(str(offset_ms)) / Decimal(1000)
+        for note_type, vol_dict in ((NoteType.VOL_L, chart.note_data.vol_l), (NoteType.VOL_R, chart.note_data.vol_r)):
+            points = sorted(vol_dict.items())
+            for (time_i, vol_i), (time_f, vol_f) in zip(points, points[1:]):
+                if SegmentFlag.END in vol_i.point_type or vol_i.filter_index != FILTER_TYPE_PARAM_ASSIGN:
+                    continue
+
+                start = chart._get_elapsed_time(time_i) + offset_seconds
+                end = chart._get_elapsed_time(time_f) + offset_seconds
+                start_sample = int(round(float(start) * self.sample_rate))
+                end_sample = int(round(float(end) * self.sample_rate))
+                clip_start = max(0, start_sample)
+                clip_end = min(audio_samples, end_sample)
+                if clip_end <= clip_start:
+                    continue
+
+                full_count = end_sample - start_sample
+                sample_offset = clip_start - start_sample
+                phase = np.arange(sample_offset, sample_offset + clip_end - clip_start, dtype=np.float32) / max(full_count, 1)
+                phase = self._apply_laser_easing(phase, vol_i.ease_type)
+                lane_curve = float(vol_i.end) + (float(vol_f.start) - float(vol_i.end)) * phase
+                value_curve = self._laser_value_for_lane(note_type, lane_curve)
+
+                value_view = values[clip_start:clip_end]
+                active_view = active[clip_start:clip_end]
+                update = ~active_view | (value_curve > value_view)
+                value_view[update] = value_curve[update]
+                active_view[update] = True
+        return values, active
+
+    def _render_effect_event_with_param_assign(
+        self,
+        chart: ChartInfo,
+        output: np.ndarray,
+        event: FXRenderEvent[Effect],
+        values: np.ndarray,
+        active: np.ndarray,
+    ) -> None:
+        """Render one effect event, refreshing an assigned parameter every 512 samples."""
+
+        if not np.any(active[event.start_sample : event.end_sample]) or not self._has_param_assign(chart, event):
+            self._render_effect_event(output, event, sample_offset=0)
+            return
+
+        source_segment = output[event.start_sample : event.end_sample].copy()
+        for start in range(event.start_sample, event.end_sample, FX_PARAM_ASSIGN_BLOCK_SIZE):
+            end = min(start + FX_PARAM_ASSIGN_BLOCK_SIZE, event.end_sample)
+            effect = event.effect
+            block_active = active[start:end]
+            if np.any(block_active):
+                value = float(np.mean(values[start:end][block_active]))
+                effect = self._effect_with_param_assign(chart, event, value)
+            block_event = replace(event, start_sample=start, end_sample=end, effect=effect)
+            self._render_effect_event(
+                output,
+                block_event,
+                sample_offset=start - event.start_sample,
+                source_segment=source_segment,
+            )
+
+    @staticmethod
+    def _has_param_assign(chart: ChartInfo, event: FXRenderEvent[Effect]) -> bool:
+        if event.effect_entry_index is None or event.effect_entry_index >= len(chart.tab_param_assignments):
+            return False
+        entry = chart.tab_param_assignments[event.effect_entry_index]
+        assign = entry.param1 if event.chain_index == 0 else entry.param2
+        return event.effect.get_vox_param_field(assign.param_index) is not None
+
+    def _effect_with_param_assign(
+        self,
+        chart: ChartInfo,
+        event: FXRenderEvent[Effect],
+        vol_value: float,
+    ) -> Effect:
+        """Return an effect copy with this event's assigned VOL parameter interpolated."""
+
+        if event.effect_entry_index is None or event.effect_entry_index >= len(chart.tab_param_assignments):
+            return event.effect
+        assign_entry = chart.tab_param_assignments[event.effect_entry_index]
+        assign = assign_entry.param1 if event.chain_index == 0 else assign_entry.param2
+        field = event.effect.get_vox_param_field(assign.param_index)
+        if field is None:
+            return event.effect
+
+        value = assign.min_value + (assign.max_value - assign.min_value) * float(np.clip(vol_value, 0.0, 1.0))
+        current = getattr(event.effect, field)
+        if isinstance(current, Enum):
+            value = type(current)(round(value))
+        elif isinstance(current, int) and not isinstance(current, bool):
+            value = int(round(value))
+        return replace(event.effect, **{field: value})
+
+    def _render_effect_event(
+        self,
+        output: np.ndarray,
+        event: FXRenderEvent[Effect],
+        *,
+        sample_offset: int,
+        source_segment: np.ndarray | None = None,
+    ) -> None:
+        """Render one already-parameterized event stage into ``output``."""
+
+        segment = output[event.start_sample : event.end_sample]
+        if len(segment) == 0:
+            return
+        if os.environ.get("SDVX_FX_DEBUG") and isinstance(event.effect, (Retrigger, RetriggerEx)):
+            print(
+                "FX event: "
+                f"{event.label} "
+                f"start_sample={event.start_sample} "
+                f"end_sample={event.end_sample} "
+                f"duration_samples={event.end_sample - event.start_sample}"
+            )
+        if isinstance(event.effect, PitchShift):
+            self._render_pitch_shift_event(output, cast(FXRenderEvent[PitchShift], event))
+        elif isinstance(event.effect, Flanger):
+            self._render_flanger_event(output, cast(FXRenderEvent[Flanger], event))
+        else:
+            output[event.start_sample : event.end_sample] = self.apply(
+                event.effect,
+                segment,
+                event.bpm,
+                sample_offset=sample_offset,
+                source_segment=source_segment,
+            )
 
     def _load_shots(self, shot_dir: Path | None) -> dict[int, np.ndarray]:
         """Decode numbered shot resources keyed by their 1-based FX slot."""
@@ -228,6 +365,7 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX, ShotSFX):
                         bpm=float(chart.get_bpm(timepoint)),
                         effect=effect,
                         chain_index=chain_index,
+                        effect_entry_index=effect_index,
                         label=(
                             f"{note_type} {chart.timepoint_to_vox(timepoint)} "
                             f"slot={fx.special} effect{chain_index + 1}{cut_label}"
@@ -257,6 +395,7 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX, ShotSFX):
                         bpm=float(chart.get_bpm(timepoint)),
                         effect=effect,
                         chain_index=chain_index,
+                        effect_entry_index=effect_index,
                         label=(
                             f"AUTO TAB {chart.timepoint_to_vox(timepoint)} "
                             f"slot={autotab.effect_index} effect{chain_index + 1}"

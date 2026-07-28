@@ -1,6 +1,9 @@
 """Enumerations used by SOUND VOLTEX VOX charts."""
 from enum import Enum, Flag, auto
 
+
+FILTER_TYPE_PARAM_ASSIGN = 6
+
 __all__ = [
     "SpinType",
     "EasingType",

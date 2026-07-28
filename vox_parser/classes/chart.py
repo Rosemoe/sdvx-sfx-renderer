@@ -366,7 +366,7 @@ class ChartInfo:
     # Effect info
     effect_list: list[EffectEntry] = field(default_factory=list)
     filter_list: list[Effect] = field(default_factory=list)
-    autotab_params: list[TabParamAssignEntry] = field(default_factory=list)
+    tab_param_assignments: list[TabParamAssignEntry] = field(default_factory=list)
 
     autotab_infos: dict[TimePoint, AutoTabInfo] = field(default_factory=dict)
     post_effect_infos: list[PostEffectInfo] = field(default_factory=list)

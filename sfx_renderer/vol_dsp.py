@@ -9,7 +9,7 @@ from scipy import signal
 
 from vox_parser.classes.chart import ChartInfo
 from vox_parser.classes.effects import Bitcrush, Effect, HighpassFilter, LowpassFilter
-from vox_parser.classes.enums import EasingType, NoteType, SegmentFlag
+from vox_parser.classes.enums import FILTER_TYPE_PARAM_ASSIGN, EasingType, NoteType, SegmentFlag
 
 from .audio import clamp, overlay_audio
 from .filters import FilterDSP
@@ -29,7 +29,7 @@ class VolDSP(FilterDSP):
         for note_type, vol_dict in ((NoteType.VOL_L, chart.note_data.vol_l), (NoteType.VOL_R, chart.note_data.vol_r)):
             points = sorted(vol_dict.items())
             for (time_i, vol_i), (time_f, vol_f) in zip(points, points[1:]):
-                if SegmentFlag.END in vol_i.point_type:
+                if SegmentFlag.END in vol_i.point_type or vol_i.filter_index == FILTER_TYPE_PARAM_ASSIGN:
                     continue
 
                 start_time = chart._get_elapsed_time(time_i) + offset_seconds
