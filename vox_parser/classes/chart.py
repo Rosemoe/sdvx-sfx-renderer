@@ -44,6 +44,7 @@ __all__ = [
     "SPControllerInfo",
     "SPControllerData",
     "parse_spcontroller_param",
+    "BpmOption",
     "AutoTabInfo",
     "LyricInfo",
     "PostEffectInfo",
@@ -304,6 +305,19 @@ class SPControllerData:
 
 
 @dataclass
+class BpmOption:
+    """One raw option from the VOX version 13 ``BPM OPTION`` section.
+
+    Parameters are preserved as strings. Known options currently are
+    ``ConstantScroll`` with one float parameter and ``RepresentativeBpm``
+    with one integer parameter.
+    """
+
+    option: str
+    params: list[str] = field(default_factory=list)
+
+
+@dataclass
 class AutoTabInfo:
     """A timed assignment of one tab effect to a laser segment."""
 
@@ -358,6 +372,7 @@ class ChartInfo:
 
     # Song data that may change mid-song
     bpms: dict[TimePoint, Decimal] = field(default_factory=dict)
+    bpm_options: list[BpmOption] = field(default_factory=list)
     timesigs: dict[TimePoint, TimeSignature] = field(default_factory=dict)
     stops: dict[TimePoint, bool] = field(default_factory=dict)
     tilt_type: dict[TimePoint, TiltType] = field(default_factory=dict)

@@ -8,6 +8,7 @@ from typing import TextIO
 
 from ..classes.chart import (
     AutoTabInfo,
+    BpmOption,
     BTInfo,
     ChartInfo,
     FXInfo,
@@ -49,11 +50,12 @@ SECTION_MAP: dict[str, VOXSection] = {
     "BEAT RESOLUTION": VOXSection.BEAT_RESOLUTION,
     "BEAT INFO": VOXSection.TIME_SIGNATURE,
     "BPM INFO": VOXSection.BPM,
+    "BPM OPTION": VOXSection.BPM_OPTION,
     "TILT MODE INFO": VOXSection.TILT,
     "LYRIC INFO": VOXSection.LYRICS,
     "END POSITION": VOXSection.END_POSITION,
-    "TAB EFFECT INFO": VOXSection.FILTER_PARAMS,
-    "FXBUTTON EFFECT INFO": VOXSection.EFFECT_PARAMS,
+    "TAB EFFECT INFO": VOXSection.TAB_FILTERS,
+    "FXBUTTON EFFECT INFO": VOXSection.FX_EFFECTS,
     "TAB PARAM ASSIGN INFO": VOXSection.TAB_PARAM_ASSIGN,
     "REVERB EFFECT PARAM": VOXSection.REVERB,
     "POSTEFFECT": VOXSection.POST_EFFECT,
@@ -65,7 +67,7 @@ SECTION_MAP: dict[str, VOXSection] = {
     "TRACK6": VOXSection.TRACK_BT_D,
     "TRACK7": VOXSection.TRACK_FX_R,
     "TRACK8": VOXSection.TRACK_VOL_R,
-    "TRACK AUTO TAB": VOXSection.AUTOTAB_INFO,
+    "TRACK AUTO TAB": VOXSection.AUTOTAB,
     "TRACK ORIGINAL L": VOXSection.TRACK_VOL_L_ORIG,
     "TRACK ORIGINAL R": VOXSection.TRACK_VOL_R_ORIG,
     "SPCONTROLER": VOXSection.SPCONTROLLER,
@@ -113,11 +115,12 @@ SECTION_REGEX: dict[VOXSection, re.Pattern] = {
     VOXSection.BEAT_RESOLUTION : re.compile(r"(?P<resolution>\d+)"),
     VOXSection.TIME_SIGNATURE  : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+(?P<upper>\d+)\s+(?P<lower>\d+)"),
     VOXSection.BPM             : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+(?P<bpm>\d+\.\d+)\s+(?P<unknown>\d+-?)"),
+    VOXSection.BPM_OPTION      : re.compile(r"^(?P<option>[^\t]+)(?:\t(?P<params>.*))?$"),
     VOXSection.TILT            : re.compile(r"(?P<timepoint>\d+,\d+,\d+)(\s+(?P<tilt_type>\d))?"),
     VOXSection.LYRICS          : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+(?P<duration>\d+)\s+(?P<text>.+)"),
     VOXSection.END_POSITION    : re.compile(r"(?P<timepoint>\d+,\d+,\d+)"),
-    VOXSection.FILTER_PARAMS   : re.compile(rf"^(?P<filter_index>\d+)(?P<content>(?:,\s*{NUMBER_REGEX})+)\s*$"),
-    VOXSection.EFFECT_PARAMS   : re.compile(rf"^(?P<effect_index>\d+)(?P<content>(?:,\s*{NUMBER_REGEX})+)\s*$"),
+    VOXSection.TAB_FILTERS   : re.compile(rf"^(?P<filter_index>\d+)(?P<content>(?:,\s*{NUMBER_REGEX})+)\s*$"),
+    VOXSection.FX_EFFECTS   : re.compile(rf"^(?P<effect_index>\d+)(?P<content>(?:,\s*{NUMBER_REGEX})+)\s*$"),
     VOXSection.TAB_PARAM_ASSIGN: re.compile(rf"^(?P<index>\d+),\s*(?P<param_index>\d+),\s*"
                                              rf"(?P<param_start>{NUMBER_REGEX}),\s*(?P<param_end>{NUMBER_REGEX})\s*$"),
     VOXSection.REVERB          : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+"
@@ -142,7 +145,7 @@ SECTION_REGEX: dict[VOXSection, re.Pattern] = {
     VOXSection.TRACK_BT_D      : re.compile(r"(?P<timepoint>\d+,\d+,\d+)(\s+(?P<duration>\d+))?(\s+(?P<special>-?\d+))?(\s+(?P<param_ex>-?\d+))?"),
     VOXSection.TRACK_FX_R      : re.compile(r"(?P<timepoint>\d+,\d+,\d+)(\s+(?P<duration>\d+))?(\s+(?P<special>-?\d+))?(\s+(?P<param_ex>-?\d+))?"),
     VOXSection.TRACK_VOL_R     : VOL_TRACK_REGEX,
-    VOXSection.AUTOTAB_INFO    : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+(?P<duration>\d+)\s+(?P<effect_index>\d+)"),
+    VOXSection.AUTOTAB    : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+(?P<duration>\d+)\s+(?P<effect_index>\d+)"),
     VOXSection.TRACK_VOL_L_ORIG: VOL_TRACK_REGEX,
     VOXSection.TRACK_VOL_R_ORIG: VOL_TRACK_REGEX,
     VOXSection.SPCONTROLLER    : SPCONTROLLER_REGEX,
@@ -339,6 +342,11 @@ class VOXParser:
             bpm = Decimal(match["bpm"])
             # Ignoring stops because it's unnecessary (for now)
             self._chart.bpms[timepoint] = bpm
+        elif self._current_section == VOXSection.BPM_OPTION:
+            params = match["params"]
+            self._chart.bpm_options.append(
+                BpmOption(option=match["option"], params=params.split("\t") if params else [])
+            )
         elif self._current_section == VOXSection.TILT:
             timepoint = self._convert_vox_timepoint(match["timepoint"])
             tilt_type = TiltType(int(match["tilt_type"] or TiltType.NORMAL.value))
@@ -351,7 +359,7 @@ class VOXParser:
             end_position = self._convert_vox_timepoint(match["timepoint"])
             self._chart.end_position = end_position
             self._chart.end_measure = end_position.measure
-        elif self._current_section == VOXSection.FILTER_PARAMS:
+        elif self._current_section == VOXSection.TAB_FILTERS:
             if not self._parsed_tab_effect_params:
                 self._chart.filter_list = []
                 self._parsed_tab_effect_params = True
@@ -379,7 +387,7 @@ class VOXParser:
 
             if tab_effect is not None:
                 self._chart.filter_list.append(tab_effect)
-        elif self._current_section == VOXSection.EFFECT_PARAMS:
+        elif self._current_section == VOXSection.FX_EFFECTS:
             if not self._parsed_effect_params:
                 self._chart.effect_list = []
                 self._effect_param_buffer = []
@@ -526,7 +534,7 @@ class VOXParser:
             else:
                 bt_dict = self._chart.note_data.bt_d
             bt_dict[timepoint] = BTInfo(Fraction(duration, TICKS_PER_BAR), special, param_ex)
-        elif self._current_section == VOXSection.AUTOTAB_INFO:
+        elif self._current_section == VOXSection.AUTOTAB:
             timepoint = self._convert_vox_timepoint(match["timepoint"])
             duration = Fraction(int(match["duration"]), TICKS_PER_BAR)
             # This is the same raw effect index used by FXInfo.special for
