@@ -98,7 +98,8 @@ VOL_TRACK_REGEX = re.compile(
     r"(?P<segment_type>\d+)\s+(?P<spin_type>\d+)\s+(?P<filter_type>\d+)"
     r"(?P<extra_params>(?:\s+\S+)*)\s*$"
 )
-STOF_PREFIX_REGEX = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?")
+NUMBER_REGEX = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
+STOF_PREFIX_REGEX = re.compile(NUMBER_REGEX)
 SPCONTROLLER_REGEX = re.compile(
     r"(?P<timepoint>\d+,\d+,\d+)\s+"
     r"(?P<sp_type>\S+)\s+(?P<sp_subtype>\S+)\s+"
@@ -117,10 +118,10 @@ SECTION_REGEX: dict[VOXSection, re.Pattern] = {
     VOXSection.TILT            : re.compile(r"(?P<timepoint>\d+,\d+,\d+)(\s+(?P<tilt_type>\d))?"),
     VOXSection.LYRICS          : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+(?P<duration>\d+)\s+(?P<text>.+)"),
     VOXSection.END_POSITION    : re.compile(r"(?P<timepoint>\d+,\d+,\d+)"),
-    VOXSection.FILTER_PARAMS   : re.compile(r"(?P<filter_index>\d+)(?P<content>(,\s+\d+(\.\d+)?))+"),
-    VOXSection.EFFECT_PARAMS   : re.compile(r"(?P<effect_index>\d+)(?P<content>(,\s+\d+(\.\d+)?))+"),
-    VOXSection.AUTOTAB_PARAMS  : re.compile(r"(?P<index>\d+),\s+(?P<param_index>\d+),\s+"
-                                            r"(?P<param_start>\d+(\.\d+)?),\s+(?P<param_end>\d+(\.\d+)?)"),
+    VOXSection.FILTER_PARAMS   : re.compile(rf"^(?P<filter_index>\d+)(?P<content>(?:,\s*{NUMBER_REGEX})+)\s*$"),
+    VOXSection.EFFECT_PARAMS   : re.compile(rf"^(?P<effect_index>\d+)(?P<content>(?:,\s*{NUMBER_REGEX})+)\s*$"),
+    VOXSection.AUTOTAB_PARAMS  : re.compile(rf"^(?P<index>\d+),\s*(?P<param_index>\d+),\s*"
+                                             rf"(?P<param_start>{NUMBER_REGEX}),\s*(?P<param_end>{NUMBER_REGEX})\s*$"),
     VOXSection.REVERB          : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+"
                                             r"(?P<param_1>-?\d+(?:\.\d+)?)\s+"
                                             r"(?P<param_2>-?\d+(?:\.\d+)?)\s+"
