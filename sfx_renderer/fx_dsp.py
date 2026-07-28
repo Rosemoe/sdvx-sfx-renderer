@@ -19,6 +19,7 @@ from vox_parser.classes.effects import (
     NoEffect,
     PassFilterType,
     PitchShift,
+    ProvisionalSampler,
     Retrigger,
     RetriggerEx,
     Sidechain,
@@ -87,6 +88,74 @@ class FXDSP(FilterDSP):
         if isinstance(effect, HighpassFilter):
             return self._apply_highpass_filter(effect, segment)
         return segment
+
+    def apply_provisional_sampler(
+        self,
+        effect: ProvisionalSampler,
+        dry_segment: np.ndarray,
+        source_audio: np.ndarray,
+        source_start_sample: int,
+    ) -> np.ndarray:
+        """Render a ProvisionalSampler against the immutable decoded song audio."""
+
+        frame_count = len(dry_segment)
+        if frame_count == 0:
+            return dry_segment.copy()
+
+        mode = max(0, int(effect.mode_control))
+        filter_mode = mode // 1000 % 10
+        independent_mix = mode // 100 % 10 == 1
+        reverse = mode // 10 % 10 == 1
+        indices = np.arange(frame_count, dtype=np.int64)
+        if reverse:
+            indices = source_start_sample - indices
+        else:
+            indices = source_start_sample + indices
+
+        wet = np.zeros_like(dry_segment)
+        valid = (indices >= 0) & (indices < len(source_audio))
+        wet[valid] = source_audio[indices[valid]]
+        if filter_mode in (1, 2):
+            b, a = self._biquad_pass(
+                effect.cutoff,
+                q=max(effect.q, 0.1),
+                filter_type="lowpass" if filter_mode == 1 else "highpass",
+                min_freq=1.0,
+            )
+            wet = signal.lfilter(b, a, wet, axis=0).astype(wet.dtype, copy=False)
+
+        wet = self._apply_provisional_stereo_width(wet, effect.stereo_width)
+        wet_limit = 200.0 if independent_mix else 100.0
+        wet_mix = _clamp(effect.wet_mix, 0.0, wet_limit) * 0.01
+        dry_mix = (
+            _clamp(effect.dry_mix, 0.0, 200.0) * 0.01
+            if independent_mix
+            else _clamp(100.0 - effect.wet_mix, 0.0, 100.0) * 0.01
+        )
+        return wet * wet_mix + dry_segment * dry_mix
+
+    @staticmethod
+    def _apply_provisional_stereo_width(samples: np.ndarray, stereo_width: float) -> np.ndarray:
+        """Apply the game's asymmetric 2x2 ProvisionalSampler width matrix."""
+
+        width = _clamp(stereo_width, 0.0, 1.0)
+        if width <= 0.5:
+            left_from_left = width + 0.5
+            left_from_right = 0.5 - width
+            right_from_left = 0.0
+            right_from_right = 2.0 * width
+        else:
+            left_from_left = 1.5 - 2.0 * width
+            left_from_right = 0.0
+            right_from_left = width - 0.5
+            right_from_right = 1.5 - width
+
+        output = samples.copy()
+        left = samples[:, 0].copy()
+        right = samples[:, 1].copy()
+        output[:, 0] = left * left_from_left + right * left_from_right
+        output[:, 1] = left * right_from_left + right * right_from_right
+        return output
     def _beats_to_samples(self, beats: float, bpm: float) -> int:
         return max(1, int(round((60.0 / max(bpm, 1.0)) * beats * self.sample_rate)))
 

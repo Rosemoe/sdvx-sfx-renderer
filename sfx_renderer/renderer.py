@@ -13,7 +13,7 @@ import numpy as np
 
 from vox_parser import parse_vox
 from vox_parser.classes.chart import ChartInfo
-from vox_parser.classes.effects import Effect, Flanger, PitchShift, Retrigger, RetriggerEx
+from vox_parser.classes.effects import Effect, Flanger, PitchShift, ProvisionalSampler, Retrigger, RetriggerEx
 from vox_parser.classes.enums import FILTER_TYPE_PARAM_ASSIGN, NoteType, SegmentFlag
 from vox_parser.classes.time import TimePoint
 
@@ -140,6 +140,8 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX, ShotSFX):
             offset_ms,
         )
         output = audio.astype(np.float32, copy=True)
+        source_audio = output.copy()
+        source_offset_samples = int(round(offset_ms * self.sample_rate / 1000.0))
         for event in events:
             self._render_effect_event_with_param_assign(
                 chart,
@@ -147,6 +149,8 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX, ShotSFX):
                 event,
                 param_assign_values,
                 param_assign_active,
+                source_audio=source_audio,
+                source_offset_samples=source_offset_samples,
             )
         self._render_vol_effects(chart, output, offset_ms=offset_ms)
         if knob_audio is not None and len(knob_audio) > 0 and knob_volume > 0:
@@ -204,11 +208,21 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX, ShotSFX):
         event: FXRenderEvent[Effect],
         values: np.ndarray,
         active: np.ndarray,
+        *,
+        source_audio: np.ndarray,
+        source_offset_samples: int,
     ) -> None:
         """Render one effect event, refreshing an assigned parameter every 512 samples."""
 
         if not np.any(active[event.start_sample : event.end_sample]) or not self._has_param_assign(chart, event):
-            self._render_effect_event(output, event, sample_offset=0)
+            self._render_effect_event(
+                output,
+                event,
+                sample_offset=0,
+                chart=chart,
+                source_audio=source_audio,
+                source_offset_samples=source_offset_samples,
+            )
             return
 
         source_segment = output[event.start_sample : event.end_sample].copy()
@@ -225,6 +239,9 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX, ShotSFX):
                 block_event,
                 sample_offset=start - event.start_sample,
                 source_segment=source_segment,
+                chart=chart,
+                source_audio=source_audio,
+                source_offset_samples=source_offset_samples,
             )
 
     @staticmethod
@@ -266,6 +283,9 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX, ShotSFX):
         *,
         sample_offset: int,
         source_segment: np.ndarray | None = None,
+        chart: ChartInfo | None = None,
+        source_audio: np.ndarray | None = None,
+        source_offset_samples: int = 0,
     ) -> None:
         """Render one already-parameterized event stage into ``output``."""
 
@@ -284,6 +304,21 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX, ShotSFX):
             self._render_pitch_shift_event(output, cast(FXRenderEvent[PitchShift], event))
         elif isinstance(event.effect, Flanger):
             self._render_flanger_event(output, cast(FXRenderEvent[Flanger], event))
+        elif isinstance(event.effect, ProvisionalSampler) and source_audio is not None:
+            source_start = self._provisional_sampler_source_start(
+                chart,
+                event,
+                event.effect,
+                source_offset_samples,
+            )
+            if sample_offset and event.effect.audio_offset >= 0.0:
+                source_start += -sample_offset if event.effect.mode_control // 10 % 10 == 1 else sample_offset
+            output[event.start_sample : event.end_sample] = self.apply_provisional_sampler(
+                event.effect,
+                segment,
+                source_audio,
+                source_start,
+            )
         else:
             output[event.start_sample : event.end_sample] = self.apply(
                 event.effect,
@@ -292,6 +327,43 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX, ShotSFX):
                 sample_offset=sample_offset,
                 source_segment=source_segment,
             )
+
+    def _provisional_sampler_source_start(
+        self,
+        chart: ChartInfo | None,
+        event: FXRenderEvent[Effect],
+        effect: ProvisionalSampler,
+        source_offset_samples: int,
+    ) -> int:
+        """Resolve the source sample, snapping absolute offsets to the chart BPM grid."""
+
+        if effect.audio_offset < 0.0 or chart is None:
+            return event.start_sample
+
+        grid = int(effect.mode_control) % 10
+        source_seconds = effect.audio_offset
+        if grid > 0:
+            source_seconds = self._snap_provisional_sampler_time(chart, source_seconds, grid)
+        return int(round(source_seconds * self.sample_rate)) + source_offset_samples
+
+    def _snap_provisional_sampler_time(self, chart: ChartInfo, seconds: float, grid: int) -> float:
+        """Snap a song time to the nearest beat subdivision across BPM segments."""
+
+        bpm_points = sorted(chart.bpms)
+        if not bpm_points:
+            return seconds
+        target = Decimal(str(max(seconds, 0.0)))
+        for index, timepoint in enumerate(bpm_points):
+            start = chart._get_elapsed_time(timepoint)
+            end = chart._get_elapsed_time(bpm_points[index + 1]) if index + 1 < len(bpm_points) else None
+            if end is not None and target >= end:
+                continue
+            bpm = float(chart.bpms[timepoint])
+            beat_seconds = 60.0 / max(bpm, 1.0)
+            local_beats = (float(target - start) / beat_seconds)
+            snapped_beats = round(local_beats * grid) / grid
+            return float(start) + snapped_beats * beat_seconds
+        return seconds
 
     def _load_shots(self, shot_dir: Path | None) -> dict[int, np.ndarray]:
         """Decode numbered shot resources keyed by their 1-based FX slot."""

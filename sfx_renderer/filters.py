@@ -32,8 +32,17 @@ class FilterDSP:
         a = np.array([1 + alpha / a_gain, -2 * cos_omega, 1 - alpha / a_gain], dtype=np.float64)
         return b / a[0], a / a[0]
 
-    def _biquad_pass(self, freq: float, *, q: float, filter_type: str) -> tuple[np.ndarray, np.ndarray]:
-        freq = clamp(freq, 20.0, self.sample_rate / 2.0 - 100.0)
+    def _biquad_pass(
+        self,
+        freq: float,
+        *,
+        q: float,
+        filter_type: str,
+        min_freq: float = 20.0,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return pass-filter coefficients, clamping cutoff to ``min_freq`` or higher."""
+
+        freq = clamp(freq, min_freq, self.sample_rate / 2.0 - 100.0)
         omega = 2 * np.pi * freq / self.sample_rate
         sin_omega = np.sin(omega)
         cos_omega = np.cos(omega)

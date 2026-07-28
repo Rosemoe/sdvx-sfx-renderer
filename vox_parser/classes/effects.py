@@ -26,6 +26,7 @@ __all__ = [
     "RetriggerEx",
     "PitchShift",
     "PitchShiftEx",
+    "ProvisionalSampler",
     "Tapescratch",
     "LowpassFilter",
     "HighpassFilter",
@@ -62,6 +63,7 @@ class FXType(_StringifiableEnum):
     LOW_PASS_FILTER = 11
     HIGH_PASS_FILTER = 12
     PITCH_SHIFT_EX = 13
+    PROVISIONAL_SAMPLER = 14
 
 
 class PassFilterType(_StringifiableEnum):
@@ -122,6 +124,15 @@ class Effect(VoxEntity, ABC):
             FXType.LOW_PASS_FILTER: ("mix", "vol_cutoff_bound", "cutoff", "q"),
             FXType.HIGH_PASS_FILTER: ("mix", "cutoff", "vol_cutoff_bound", "q"),
             FXType.PITCH_SHIFT_EX: ("mix", "semitones", "ex_param"),
+            FXType.PROVISIONAL_SAMPLER: (
+                "wet_mix",
+                "dry_mix",
+                "mode_control",
+                "audio_offset",
+                "stereo_width",
+                "cutoff",
+                "q",
+            ),
         }
         fields = fields_by_type.get(self.effect_index)
         if fields is None or not 1 <= param_order <= len(fields):
@@ -472,6 +483,38 @@ class HighpassFilter(Effect):
         )
 
 
+@_register_effect
+@dataclass
+class ProvisionalSampler(Effect):
+    """A tempo-synchronised sampler effect introduced by newer VOX versions."""
+
+    wet_mix: float = 100.00
+    dry_mix: float = 0.00
+    mode_control: int = 0
+    audio_offset: float = -1.00
+    stereo_width: float = 0.50
+    cutoff: float = 2000.00
+    q: float = 1.40
+
+    @property
+    def effect_index(self) -> FXType:
+        return FXType.PROVISIONAL_SAMPLER
+
+    def to_vox_string(self) -> str:
+        return ",\t".join(
+            [
+                f"{self.effect_index.value}",
+                f"{self.wet_mix:.2f}",
+                f"{self.dry_mix:.2f}",
+                f"{self.mode_control}",
+                f"{self.audio_offset:.2f}",
+                f"{self.stereo_width:.2f}",
+                f"{self.cutoff:.2f}",
+                f"{self.q:.2f}",
+            ]
+        )
+
+
 @dataclass
 class EffectEntry(VoxEntity):
     """
@@ -579,6 +622,16 @@ def from_vox_params(effect_index: int, params: Sequence[float]) -> Effect:
             return LowpassFilter(mix=get(0, 75.0), vol_cutoff_bound=get(1, 400.0), cutoff=get(2, 900.0), q=get(3, 2.0))
         case FXType.HIGH_PASS_FILTER:
             return HighpassFilter(mix=get(0, 100.0), cutoff=get(1, 2000.0), vol_cutoff_bound=get(2, 5.0), q=get(3, 1.4))
+        case FXType.PROVISIONAL_SAMPLER:
+            return ProvisionalSampler(
+                wet_mix=get(0, 100.0),
+                dry_mix=get(1, 0.0),
+                mode_control=int(get(2, 0)),
+                audio_offset=get(3, -1.0),
+                stereo_width=get(4, 0.5),
+                cutoff=get(5, 2000.0),
+                q=get(6, 1.4),
+            )
 
 
 def get_default_effects() -> list[EffectEntry]:
