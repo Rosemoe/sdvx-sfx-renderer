@@ -17,4 +17,5 @@ class FXRenderEvent(Generic[EffectT]):
     end_sample: int
     bpm: float
     effect: EffectT
+    chain_index: int = 0
     label: str = ""

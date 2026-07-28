@@ -92,6 +92,7 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX, ShotSFX):
                     for index, existing in enumerate(merged)
                     if existing.start_sample == event.start_sample
                     and existing.end_sample == event.end_sample
+                    and existing.chain_index == event.chain_index
                     and type(existing.effect) is type(event.effect)
                     and existing.effect == event.effect
                 ),
@@ -107,6 +108,7 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX, ShotSFX):
                 end_sample=existing.end_sample,
                 bpm=existing.bpm,
                 effect=existing.effect,
+                chain_index=existing.chain_index,
                 label=f"{existing.label} | {event.label}",
             )
         return merged
@@ -199,7 +201,6 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX, ShotSFX):
             effect_index = fx.special - 2
             if not 0 <= effect_index < len(chart.effect_list):
                 continue
-            effect = chart.effect_list[effect_index].effect1
             nominal_end_timepoint = chart.add_duration(timepoint, fx.duration)
             following_start = next_fx_start[timepoint]
             end_timepoint = (
@@ -218,18 +219,21 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX, ShotSFX):
             end_sample = min(audio_samples, int(round(float(end) * self.sample_rate)))
             if end_sample <= start_sample:
                 continue
-            events.append(
-                FXRenderEvent(
-                    start_sample=start_sample,
-                    end_sample=end_sample,
-                    bpm=float(chart.get_bpm(timepoint)),
-                    effect=effect,
-                    label=(
-                        f"{note_type} {chart.timepoint_to_vox(timepoint)} "
-                        f"slot={fx.special}{cut_label}"
-                    ),
+            slot = chart.effect_list[effect_index]
+            for chain_index, effect in enumerate((slot.effect1, slot.effect2)):
+                events.append(
+                    FXRenderEvent(
+                        start_sample=start_sample,
+                        end_sample=end_sample,
+                        bpm=float(chart.get_bpm(timepoint)),
+                        effect=effect,
+                        chain_index=chain_index,
+                        label=(
+                            f"{note_type} {chart.timepoint_to_vox(timepoint)} "
+                            f"slot={fx.special} effect{chain_index + 1}{cut_label}"
+                        ),
+                    )
                 )
-            )
 
         for timepoint, autotab in sorted(chart.autotab_infos.items()):
             if autotab.duration <= 0 or autotab.effect_index <= 0:
@@ -237,7 +241,6 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX, ShotSFX):
             effect_index = autotab.effect_index - 2
             if not 0 <= effect_index < len(chart.effect_list):
                 continue
-            effect = chart.effect_list[effect_index].effect1
             end_timepoint = chart.add_duration(timepoint, autotab.duration)
             start = chart._get_elapsed_time(timepoint) + offset_seconds
             end = chart._get_elapsed_time(end_timepoint) + offset_seconds
@@ -245,15 +248,21 @@ class FXEffects(FXDSP, VolDSP, NoteHitSFX, ShotSFX):
             end_sample = min(audio_samples, int(round(float(end) * self.sample_rate)))
             if end_sample <= start_sample:
                 continue
-            events.append(
-                FXRenderEvent(
-                    start_sample=start_sample,
-                    end_sample=end_sample,
-                    bpm=float(chart.get_bpm(timepoint)),
-                    effect=effect,
-                    label=f"AUTO TAB {chart.timepoint_to_vox(timepoint)} slot={autotab.effect_index}",
+            slot = chart.effect_list[effect_index]
+            for chain_index, effect in enumerate((slot.effect1, slot.effect2)):
+                events.append(
+                    FXRenderEvent(
+                        start_sample=start_sample,
+                        end_sample=end_sample,
+                        bpm=float(chart.get_bpm(timepoint)),
+                        effect=effect,
+                        chain_index=chain_index,
+                        label=(
+                            f"AUTO TAB {chart.timepoint_to_vox(timepoint)} "
+                            f"slot={autotab.effect_index} effect{chain_index + 1}"
+                        ),
+                    )
                 )
-            )
 
         events.sort(key=lambda event: event.start_sample)
         return self._merge_duplicate_fx_events(events)
