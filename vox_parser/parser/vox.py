@@ -25,9 +25,7 @@ from ..classes.effects import (
     LowpassFilter,
     from_vox_params,
 )
-from ..classes.filters import (
-    AutoTabParam,
-)
+from ..classes.filters import TabParamAssign, TabParamAssignEntry
 from ..classes.enums import (
     EasingType,
     NoteType,
@@ -56,7 +54,7 @@ SECTION_MAP: dict[str, VOXSection] = {
     "END POSITION": VOXSection.END_POSITION,
     "TAB EFFECT INFO": VOXSection.FILTER_PARAMS,
     "FXBUTTON EFFECT INFO": VOXSection.EFFECT_PARAMS,
-    "TAB PARAM ASSIGN INFO": VOXSection.AUTOTAB_PARAMS,
+    "TAB PARAM ASSIGN INFO": VOXSection.TAB_PARAM_ASSIGN,
     "REVERB EFFECT PARAM": VOXSection.REVERB,
     "POSTEFFECT": VOXSection.POST_EFFECT,
     "TRACK1": VOXSection.TRACK_VOL_L,
@@ -120,7 +118,7 @@ SECTION_REGEX: dict[VOXSection, re.Pattern] = {
     VOXSection.END_POSITION    : re.compile(r"(?P<timepoint>\d+,\d+,\d+)"),
     VOXSection.FILTER_PARAMS   : re.compile(rf"^(?P<filter_index>\d+)(?P<content>(?:,\s*{NUMBER_REGEX})+)\s*$"),
     VOXSection.EFFECT_PARAMS   : re.compile(rf"^(?P<effect_index>\d+)(?P<content>(?:,\s*{NUMBER_REGEX})+)\s*$"),
-    VOXSection.AUTOTAB_PARAMS  : re.compile(rf"^(?P<index>\d+),\s*(?P<param_index>\d+),\s*"
+    VOXSection.TAB_PARAM_ASSIGN: re.compile(rf"^(?P<index>\d+),\s*(?P<param_index>\d+),\s*"
                                              rf"(?P<param_start>{NUMBER_REGEX}),\s*(?P<param_end>{NUMBER_REGEX})\s*$"),
     VOXSection.REVERB          : re.compile(r"(?P<timepoint>\d+,\d+,\d+)\s+"
                                             r"(?P<param_1>-?\d+(?:\.\d+)?)\s+"
@@ -178,7 +176,8 @@ class VOXParser:
     _effect_param_buffer: list[Effect]
     _parsed_effect_params: bool
     _parsed_tab_effect_params: bool
-    _parsed_autotab_params: bool
+    _parsed_tab_param_assign: bool
+    _tab_param_assign_buffer: list[TabParamAssign]
     _parse_original_vols: bool
     _scripted_track: NoteType | None
     _current_script_id: int | None
@@ -196,7 +195,8 @@ class VOXParser:
         self._effect_param_buffer = []
         self._parsed_effect_params = False
         self._parsed_tab_effect_params = False
-        self._parsed_autotab_params = False
+        self._parsed_tab_param_assign = False
+        self._tab_param_assign_buffer = []
         self._scripted_track = None
         self._current_script_id = None
         self._current_script_lines = []
@@ -392,19 +392,24 @@ class VOXParser:
                 effect1, effect2 = self._effect_param_buffer
                 self._chart.effect_list.append(EffectEntry(effect1, effect2))
                 self._effect_param_buffer = []
-        elif self._current_section == VOXSection.AUTOTAB_PARAMS:
-            if not self._parsed_autotab_params:
+        elif self._current_section == VOXSection.TAB_PARAM_ASSIGN:
+            if not self._parsed_tab_param_assign:
                 self._chart.autotab_params = []
-                self._parsed_autotab_params = True
+                self._tab_param_assign_buffer = []
+                self._parsed_tab_param_assign = True
 
-            self._chart.autotab_params.append(
-                AutoTabParam(
+            self._tab_param_assign_buffer.append(
+                TabParamAssign(
                     effect_index=int(match["index"]),
                     param_index=int(match["param_index"]),
                     min_value=float(match["param_start"]),
                     max_value=float(match["param_end"]),
                 )
             )
+            if len(self._tab_param_assign_buffer) == 2:
+                param1, param2 = self._tab_param_assign_buffer
+                self._chart.autotab_params.append(TabParamAssignEntry(param1, param2))
+                self._tab_param_assign_buffer = []
         elif self._current_section == VOXSection.REVERB:
             pass
         elif self._current_section == VOXSection.POST_EFFECT:

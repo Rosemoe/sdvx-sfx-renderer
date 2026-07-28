@@ -1,18 +1,19 @@
 """Helpers for VOL filter parameters."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .base import VoxEntity
 from .effects import Bitcrush, Effect, HighpassFilter, LowpassFilter
 
 __all__ = [
-    "AutoTabParam",
+    "TabParamAssign",
+    "TabParamAssignEntry",
     "get_default_filters",
 ]
 
 
 @dataclass
-class AutoTabParam(VoxEntity):
-    """One parameter assignment used by a VOX auto-tab effect."""
+class TabParamAssign(VoxEntity):
+    """One parameter assignment used by a VOX tab effect."""
 
     effect_index: int
     param_index: int = 0
@@ -23,6 +24,17 @@ class AutoTabParam(VoxEntity):
         return ",\t".join(
             [f"{self.effect_index}", f"{self.param_index}", f"{self.min_value:.2f}", f"{self.max_value:.2f}"]
         )
+
+
+@dataclass
+class TabParamAssignEntry(VoxEntity):
+    """Two parameter assignments belonging to one auto-tab effect entry."""
+
+    param1: TabParamAssign = field(default_factory=lambda: TabParamAssign(0))
+    param2: TabParamAssign = field(default_factory=lambda: TabParamAssign(0))
+
+    def to_vox_string(self) -> str:
+        return f"{self.param1.to_vox_string()}\n{self.param2.to_vox_string()}\n"
 
 
 def get_default_filters() -> list[Effect]:

@@ -61,7 +61,7 @@ class VOXSection(Enum):
     END_POSITION = auto()
     FILTER_PARAMS = auto()
     EFFECT_PARAMS = auto()
-    AUTOTAB_PARAMS = auto()
+    TAB_PARAM_ASSIGN = auto()
     REVERB = auto()
     POST_EFFECT = auto()
     TRACK_VOL_L = auto()
